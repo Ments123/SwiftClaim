@@ -4,6 +4,7 @@ import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -47,6 +48,7 @@ type SqlRow = Record<string, string | number | null>;
 export interface BuildAppOptions {
   database: DatabaseSync;
   storagePath: string;
+  staticPath?: string;
   logger?: FastifyServerOptions['logger'];
   isProduction?: boolean;
   now?: () => Date;
@@ -122,6 +124,15 @@ export async function buildApp(
     max: 100,
     timeWindow: '1 minute',
   });
+  if (options.staticPath) {
+    await app.register(fastifyStatic, {
+      root: options.staticPath,
+      prefix: '/',
+      wildcard: false,
+      cacheControl: isProduction,
+      maxAge: isProduction ? '1h' : 0,
+    });
+  }
 
   app.addHook('onRequest', async (request) => {
     if (!isProduction || ['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
@@ -232,6 +243,12 @@ export async function buildApp(
   app.setNotFoundHandler((request, reply) => {
     if (request.url.startsWith('/api/')) {
       return reply.status(404).send(errorBody('NOT_FOUND', 'The requested resource was not found.'));
+    }
+    if (options.staticPath) {
+      return reply.type('text/html').sendFile('index.html', {
+        maxAge: 0,
+        immutable: false,
+      });
     }
     return reply.status(404).send('Not found');
   });

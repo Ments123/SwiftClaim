@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -66,11 +66,15 @@ describe('SwiftClaim API', () => {
 
   beforeEach(async () => {
     testDirectory = mkdtempSync(join(tmpdir(), 'swiftclaim-api-'));
+    const staticPath = join(testDirectory, 'public');
+    mkdirSync(staticPath);
+    writeFileSync(join(staticPath, 'index.html'), '<!doctype html><title>SwiftClaim</title>');
     database = createDatabase(join(testDirectory, 'test.sqlite'));
     seedDatabase(database);
     app = await buildApp({
       database,
       storagePath: join(testDirectory, 'storage'),
+      staticPath,
       logger: false,
       isProduction: false,
       now: () => new Date('2026-07-13T12:00:00.000Z'),
@@ -88,6 +92,25 @@ describe('SwiftClaim API', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ status: 'ok' });
+  });
+
+  it('serves the client shell for application routes but keeps API 404s JSON', async () => {
+    const applicationRoute = await app.inject({
+      method: 'GET',
+      url: '/matters/example-id',
+    });
+    expect(applicationRoute.statusCode).toBe(200);
+    expect(applicationRoute.headers['content-type']).toContain('text/html');
+    expect(applicationRoute.body).toContain('<title>SwiftClaim</title>');
+
+    const missingApi = await app.inject({ method: 'GET', url: '/api/missing' });
+    expect(missingApi.statusCode).toBe(404);
+    expect(missingApi.json()).toEqual({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'The requested resource was not found.',
+      },
+    });
   });
 
   it('creates a revocable HTTP-only session for valid credentials', async () => {
