@@ -1,0 +1,46 @@
+{
+  "name": "swiftclaim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SwiftClaim Litigation secure matter spine",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "dev": "concurrently -k -n api,web -c blue,green \"tsx watch src/server/index.ts\" \"vite\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "build": "npm run clean && tsc -p tsconfig.server.json && vite build",
+    "start": "node dist/server/index.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.1",
+    "@fastify/helmet": "^13.1.0",
+    "@fastify/multipart": "^10.1.0",
+    "@fastify/rate-limit": "^11.1.0",
+    "@fastify/static": "^10.1.0",
+    "fastify": "^5.10.0",
+    "lucide-react": "^1.24.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "concurrently": "^10.0.3",
+    "jsdom": "^29.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  }
+}
