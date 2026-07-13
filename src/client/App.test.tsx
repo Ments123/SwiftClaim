@@ -12,28 +12,35 @@ const userFixture = {
   name: 'Ava Morgan',
   role: 'solicitor',
   firm: { id: '10000000-0000-4000-8000-000000000001', name: 'Northstar Legal' },
-  permissions: { canCreateMatter: false, canViewAdministration: false },
+  permissions: {
+    canCreateMatter: false,
+    canViewAdministration: false,
+    canTransitionWorkflow: true,
+    canOverrideWorkflow: false,
+    canConfirmDeadline: true,
+  },
 };
 
 const matterFixture = {
   id: '30000000-0000-4000-8000-000000000001',
   reference: 'NCL-2026-0017',
-  title: 'Clarke v Meridian Insurance',
-  clientName: 'Elaine Clarke',
-  matterType: 'Personal injury litigation',
+  title: 'Clarke v Meridian Housing',
+  clientName: 'Maya Clarke',
+  matterType: 'Housing conditions claim',
   status: 'open',
-  stage: 'Disclosure',
+  stage: 'Pre-Action Protocol',
   riskLevel: 'high',
   openedAt: '2026-03-02',
-  description: 'High-value claim concerning disputed causation and future loss.',
+  description:
+    'Synthetic claim concerning persistent damp, mould and unresolved repairs.',
   externalSource: 'proclaim-demo',
   externalId: 'NCL-2026-0017',
   importBatchId: 'seed-2026-07',
   createdAt: '2026-03-02T09:15:00.000Z',
   updatedAt: '2026-07-13T08:30:00.000Z',
   owner: { id: userFixture.id, name: 'Ava Morgan' },
-  nextDeadline: '2026-07-11T15:00:00.000Z',
-  openTaskCount: 3,
+  nextDeadline: '2026-07-14T11:00:00.000Z',
+  openTaskCount: 4,
 };
 
 const dashboardFixture = {
@@ -47,7 +54,7 @@ const dashboardFixture = {
     {
       id: 'task-1',
       matterId: matterFixture.id,
-      title: 'Review defendant disclosure',
+      title: 'Review landlord repair disclosure',
       dueAt: '2026-07-11T15:00:00.000Z',
       priority: 'high',
       status: 'open',
@@ -70,7 +77,7 @@ const aggregateFixture = {
     {
       id: 'party-1',
       kind: 'client',
-      name: 'Elaine Clarke',
+      name: 'Maya Clarke',
       organisation: '',
       email: 'elaine@example.test',
       phone: '+44 7700 900123',
@@ -83,8 +90,8 @@ const aggregateFixture = {
   tasks: [
     {
       id: 'task-1',
-      title: 'Review defendant disclosure',
-      notes: 'Flag gaps.',
+      title: 'Review landlord repair disclosure',
+      notes: 'Flag missing repair and complaint records.',
       dueAt: '2026-07-11T15:00:00.000Z',
       priority: 'high',
       status: 'open',
@@ -99,8 +106,8 @@ const aggregateFixture = {
     {
       id: 'event-1',
       type: 'stage.changed',
-      title: 'Moved to disclosure',
-      detail: 'Pleadings closed.',
+      title: 'Moved to Pre-Action Protocol',
+      detail: 'Evidence reviewed and Letter of Claim sent.',
       occurredAt: '2026-07-07T14:20:00.000Z',
       actorName: 'Ava Morgan',
       metadata: {},
@@ -109,6 +116,93 @@ const aggregateFixture = {
   audit: [],
   permissions: { canWrite: true, canCreateMatter: false },
   team: dashboardFixture.team,
+};
+
+const summaryFixture = {
+  matter: matterFixture,
+  workflow: {
+    id: 'workflow-1',
+    version: 5,
+    definitionVersion: 1,
+    name: 'Housing Conditions — Claimant (England)',
+    currentStageKey: 'protocol',
+    currentStagePosition: 4,
+    completedChecklistKeys: [],
+    blockers: [],
+    stages: [
+      {
+        key: 'enquiry',
+        name: 'Enquiry',
+        position: 0,
+        description: 'Capture the enquiry.',
+        requiredChecklistKeys: [],
+        state: 'completed',
+      },
+      {
+        key: 'assessment',
+        name: 'Assessment',
+        position: 1,
+        description: 'Assess the claim.',
+        requiredChecklistKeys: [],
+        state: 'completed',
+      },
+      {
+        key: 'onboarding',
+        name: 'Onboarding',
+        position: 2,
+        description: 'Complete client onboarding.',
+        requiredChecklistKeys: [],
+        state: 'completed',
+      },
+      {
+        key: 'evidence',
+        name: 'Evidence and notice',
+        position: 3,
+        description: 'Build the evidence and notice chronology.',
+        requiredChecklistKeys: [],
+        state: 'completed',
+      },
+      {
+        key: 'protocol',
+        name: 'Pre-Action Protocol',
+        position: 4,
+        description: 'Control the Letter of Claim and landlord response.',
+        requiredChecklistKeys: ['letter_of_claim_sent'],
+        state: 'current',
+      },
+      {
+        key: 'expert',
+        name: 'Expert evidence',
+        position: 5,
+        description: 'Control expert evidence.',
+        requiredChecklistKeys: [],
+        state: 'upcoming',
+      },
+    ],
+  },
+  deadlines: [
+    {
+      id: 'deadline-1',
+      title: 'Landlord response to Letter of Claim',
+      triggerDate: '2026-07-14',
+      dueDate: '2026-08-11',
+      status: 'pending',
+      explanation:
+        '20 working days after 14 July 2026 is 11 August 2026; weekends and 0 configured holidays excluded.',
+      sourceTitle:
+        'Pre-Action Protocol for Housing Conditions Claims (England), paragraph 6.2',
+      sourceUrl:
+        'https://www.justice.gov.uk/courts/procedure-rules/civil/protocol/prot_hou',
+      ruleKey: 'housing.protocol.landlord_response',
+    },
+  ],
+  nextActions: aggregateFixture.tasks,
+  alerts: [],
+  permissions: {
+    canWrite: true,
+    canTransition: true,
+    canOverrideWorkflow: false,
+  },
 };
 
 function json(data: unknown, init: ResponseInit = {}) {
@@ -158,7 +252,7 @@ describe('SwiftClaim client', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: /good afternoon, ava/i })).toBeVisible();
-    expect(screen.getByText('Review defendant disclosure')).toBeVisible();
+    expect(screen.getByText('Review landlord repair disclosure')).toBeVisible();
     expect(screen.getByText('1 overdue')).toBeVisible();
     expect(screen.getByText(matterFixture.reference)).toBeVisible();
   });
@@ -170,6 +264,8 @@ describe('SwiftClaim client', () => {
         const url = String(input);
         if (url === '/api/me') return json({ user: userFixture });
         if (url === '/api/dashboard') return json(dashboardFixture);
+        if (url === `/api/matters/${matterFixture.id}/summary`)
+          return json(summaryFixture);
         if (url === `/api/matters/${matterFixture.id}`) return json(aggregateFixture);
         throw new Error(`Unexpected request: ${url}`);
       }),
@@ -179,10 +275,10 @@ describe('SwiftClaim client', () => {
     await userEvent.click(await screen.findByText(matterFixture.reference));
 
     expect(
-      await screen.findByRole('heading', { name: 'Clarke v Meridian Insurance' }),
+      await screen.findByRole('heading', { name: 'Clarke v Meridian Housing' }),
     ).toBeVisible();
-    expect(screen.getByText('Disclosure')).toBeVisible();
-    expect(screen.getByText('Elaine Clarke')).toBeVisible();
+    expect(screen.getAllByText('Pre-Action Protocol')[0]).toBeVisible();
+    expect(screen.getAllByText('Maya Clarke')[0]).toBeVisible();
     expect(window.location.pathname).toBe(`/matters/${matterFixture.id}`);
   });
 
@@ -219,5 +315,81 @@ describe('SwiftClaim client', () => {
     );
     expect(email).toHaveValue('ava@northstar.test');
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it('sends the visible workflow version and reloads Matter 360 after transition', async () => {
+    let transitioned = false;
+    let transitionBody: Record<string, unknown> | undefined;
+    let summaryReads = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === '/api/me') return json({ user: userFixture });
+        if (url === '/api/dashboard') return json(dashboardFixture);
+        if (url === `/api/matters/${matterFixture.id}`)
+          return json(aggregateFixture);
+        if (url === `/api/matters/${matterFixture.id}/summary`) {
+          summaryReads += 1;
+          return json(
+            transitioned
+              ? {
+                  ...summaryFixture,
+                  workflow: {
+                    ...summaryFixture.workflow,
+                    version: 6,
+                    currentStageKey: 'expert',
+                    currentStagePosition: 5,
+                    stages: summaryFixture.workflow.stages.map((stage) => ({
+                      ...stage,
+                      state:
+                        stage.key === 'expert'
+                          ? 'current'
+                          : ('completed' as const),
+                    })),
+                  },
+                }
+              : summaryFixture,
+          );
+        }
+        if (
+          url ===
+            `/api/matters/${matterFixture.id}/workflow/transitions` &&
+          init?.method === 'POST'
+        ) {
+          transitionBody = JSON.parse(String(init.body)) as Record<
+            string,
+            unknown
+          >;
+          transitioned = true;
+          return json(summaryFixture);
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await userEvent.click(await screen.findByText(matterFixture.reference));
+    await userEvent.click(
+      await screen.findByRole('button', { name: /move to expert evidence/i }),
+    );
+    await userEvent.type(
+      screen.getByLabelText(/reason for transition/i),
+      'Protocol work is complete and expert evidence can now proceed.',
+    );
+    await userEvent.click(
+      screen.getByRole('button', { name: /confirm transition/i }),
+    );
+
+    await waitFor(() => {
+      expect(transitionBody).toEqual({
+        toStageKey: 'expert',
+        expectedVersion: 5,
+        completedChecklistKeys: [],
+        reason: 'Protocol work is complete and expert evidence can now proceed.',
+      });
+      expect(summaryReads).toBe(2);
+      expect(screen.getByText(/matter state v6/i)).toBeVisible();
+    });
   });
 });

@@ -9,6 +9,57 @@ export interface SessionUser {
   role: FirmRole;
 }
 
+export type Capability =
+  | 'matter.read'
+  | 'matter.write'
+  | 'matter.create'
+  | 'workflow.transition'
+  | 'workflow.override'
+  | 'deadline.confirm'
+  | 'administration.view';
+
+const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
+  admin: [
+    'matter.read',
+    'matter.write',
+    'matter.create',
+    'workflow.transition',
+    'workflow.override',
+    'deadline.confirm',
+    'administration.view',
+  ],
+  partner: [
+    'matter.read',
+    'matter.write',
+    'matter.create',
+    'workflow.transition',
+    'workflow.override',
+    'deadline.confirm',
+    'administration.view',
+  ],
+  solicitor: [
+    'matter.read',
+    'matter.write',
+    'workflow.transition',
+    'deadline.confirm',
+  ],
+  paralegal: [
+    'matter.read',
+    'matter.write',
+    'workflow.transition',
+    'deadline.confirm',
+  ],
+  finance: ['matter.read'],
+  readonly: ['matter.read'],
+};
+
+export function hasCapability(
+  user: SessionUser,
+  capability: Capability,
+): boolean {
+  return ROLE_CAPABILITIES[user.role].includes(capability);
+}
+
 const firmWideReadRoles = new Set<FirmRole>([
   'admin',
   'partner',

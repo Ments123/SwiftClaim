@@ -297,7 +297,7 @@ describe('SwiftClaim API', () => {
         highRiskMatters: 1,
       },
     });
-    expect(response.json().urgentTasks).toHaveLength(3);
+    expect(response.json().urgentTasks).toHaveLength(4);
   });
 
   it('adds a party to an authorised matter and records the action', async () => {

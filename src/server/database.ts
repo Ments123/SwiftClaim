@@ -1,6 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
 
+import { migrations, runMigrations } from './migrations/index.js';
+import type { SessionUser } from './policy.js';
 import { hashPassword } from './security.js';
+import { MatterStore } from './store.js';
+import { seedWorkflowDefinitions } from './workflow/definitions.js';
+import { WorkflowService } from './workflow/service.js';
+import { WorkflowStore } from './workflow/store.js';
 
 export const SEED_IDS = {
   northstarFirm: '10000000-0000-4000-8000-000000000001',
@@ -20,249 +26,11 @@ export const SEED_IDS = {
   reviewTask: '50000000-0000-4000-8000-000000000003',
 } as const;
 
-const schema = String.raw`
-  PRAGMA foreign_keys = ON;
-  PRAGMA busy_timeout = 5000;
-
-  CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS firms (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    slug TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    email TEXT NOT NULL COLLATE NOCASE UNIQUE,
-    name TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('admin', 'partner', 'solicitor', 'paralegal', 'finance', 'readonly')),
-    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (firm_id) REFERENCES firms(id) ON DELETE RESTRICT,
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
-    FOREIGN KEY (user_id, firm_id) REFERENCES users(id, firm_id) ON DELETE CASCADE
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS matters (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    reference TEXT NOT NULL,
-    title TEXT NOT NULL,
-    client_name TEXT NOT NULL,
-    matter_type TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('open', 'on_hold', 'closed', 'archived')),
-    stage TEXT NOT NULL,
-    risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
-    owner_user_id TEXT NOT NULL,
-    opened_at TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    external_source TEXT,
-    external_id TEXT,
-    import_batch_id TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (firm_id) REFERENCES firms(id) ON DELETE RESTRICT,
-    FOREIGN KEY (owner_user_id, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    FOREIGN KEY (created_by, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    UNIQUE (firm_id, reference),
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS matter_members (
-    firm_id TEXT NOT NULL,
-    matter_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    access_level TEXT NOT NULL CHECK (access_level IN ('read', 'write')),
-    added_at TEXT NOT NULL,
-    PRIMARY KEY (matter_id, user_id),
-    FOREIGN KEY (matter_id, firm_id) REFERENCES matters(id, firm_id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id, firm_id) REFERENCES users(id, firm_id) ON DELETE CASCADE
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS parties (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    matter_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('client', 'opponent', 'solicitor', 'barrister', 'expert', 'witness', 'court', 'insurer', 'other')),
-    name TEXT NOT NULL,
-    organisation TEXT NOT NULL DEFAULT '',
-    email TEXT NOT NULL DEFAULT '',
-    phone TEXT NOT NULL DEFAULT '',
-    address TEXT NOT NULL DEFAULT '',
-    external_source TEXT,
-    external_id TEXT,
-    import_batch_id TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (matter_id, firm_id) REFERENCES matters(id, firm_id) ON DELETE CASCADE,
-    FOREIGN KEY (created_by, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    matter_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    notes TEXT NOT NULL DEFAULT '',
-    due_at TEXT NOT NULL,
-    priority TEXT NOT NULL CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
-    status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'completed', 'cancelled')),
-    assignee_user_id TEXT NOT NULL,
-    completed_at TEXT,
-    external_source TEXT,
-    external_id TEXT,
-    import_batch_id TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (matter_id, firm_id) REFERENCES matters(id, firm_id) ON DELETE CASCADE,
-    FOREIGN KEY (assignee_user_id, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    FOREIGN KEY (created_by, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS documents (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    matter_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    category TEXT NOT NULL,
-    external_source TEXT,
-    external_id TEXT,
-    import_batch_id TEXT,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (matter_id, firm_id) REFERENCES matters(id, firm_id) ON DELETE CASCADE,
-    FOREIGN KEY (created_by, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS document_versions (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    document_id TEXT NOT NULL,
-    version INTEGER NOT NULL CHECK (version > 0),
-    original_name TEXT NOT NULL,
-    mime_type TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
-    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
-    storage_key TEXT NOT NULL UNIQUE,
-    uploaded_by TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (document_id, firm_id) REFERENCES documents(id, firm_id) ON DELETE RESTRICT,
-    FOREIGN KEY (uploaded_by, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    UNIQUE (document_id, version),
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS timeline_events (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    matter_id TEXT NOT NULL,
-    type TEXT NOT NULL,
-    title TEXT NOT NULL,
-    detail TEXT NOT NULL DEFAULT '',
-    actor_user_id TEXT,
-    occurred_at TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}',
-    FOREIGN KEY (matter_id, firm_id) REFERENCES matters(id, firm_id) ON DELETE CASCADE,
-    FOREIGN KEY (actor_user_id, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS audit_events (
-    id TEXT PRIMARY KEY,
-    firm_id TEXT NOT NULL,
-    matter_id TEXT,
-    user_id TEXT,
-    action TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    entity_id TEXT NOT NULL,
-    before_json TEXT,
-    after_json TEXT,
-    request_id TEXT NOT NULL,
-    ip_address TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (firm_id) REFERENCES firms(id) ON DELETE RESTRICT,
-    FOREIGN KEY (matter_id, firm_id) REFERENCES matters(id, firm_id) ON DELETE RESTRICT,
-    FOREIGN KEY (user_id, firm_id) REFERENCES users(id, firm_id) ON DELETE RESTRICT,
-    UNIQUE (id, firm_id)
-  ) STRICT;
-
-  CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash, expires_at);
-  CREATE INDEX IF NOT EXISTS idx_matters_firm_updated ON matters(firm_id, updated_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_matter_members_user ON matter_members(firm_id, user_id, matter_id);
-  CREATE INDEX IF NOT EXISTS idx_parties_matter ON parties(firm_id, matter_id, created_at);
-  CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(firm_id, status, due_at);
-  CREATE INDEX IF NOT EXISTS idx_documents_matter ON documents(firm_id, matter_id, created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_timeline_matter ON timeline_events(firm_id, matter_id, occurred_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_audit_matter ON audit_events(firm_id, matter_id, created_at DESC);
-
-  CREATE TRIGGER IF NOT EXISTS audit_events_no_update
-  BEFORE UPDATE ON audit_events
-  BEGIN
-    SELECT RAISE(ABORT, 'audit_events is append-only');
-  END;
-
-  CREATE TRIGGER IF NOT EXISTS audit_events_no_delete
-  BEFORE DELETE ON audit_events
-  BEGIN
-    SELECT RAISE(ABORT, 'audit_events is append-only');
-  END;
-
-  CREATE TRIGGER IF NOT EXISTS document_versions_no_update
-  BEFORE UPDATE ON document_versions
-  BEGIN
-    SELECT RAISE(ABORT, 'document_versions is immutable');
-  END;
-
-  CREATE TRIGGER IF NOT EXISTS document_versions_no_delete
-  BEFORE DELETE ON document_versions
-  BEGIN
-    SELECT RAISE(ABORT, 'document_versions is immutable');
-  END;
-
-  CREATE TRIGGER IF NOT EXISTS timeline_events_no_update
-  BEFORE UPDATE ON timeline_events
-  BEGIN
-    SELECT RAISE(ABORT, 'timeline_events is append-only');
-  END;
-
-  CREATE TRIGGER IF NOT EXISTS timeline_events_no_delete
-  BEFORE DELETE ON timeline_events
-  BEGIN
-    SELECT RAISE(ABORT, 'timeline_events is append-only');
-  END;
-`;
 
 export function createDatabase(path: string): DatabaseSync {
   const database = new DatabaseSync(path);
   database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
-  database.exec(schema);
-  database
-    .prepare(
-      'INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (1, ?)',
-    )
-    .run(new Date().toISOString());
+  runMigrations(database, migrations);
 
   return database;
 }
@@ -381,15 +149,15 @@ export function seedDatabase(database: DatabaseSync): void {
         id: SEED_IDS.northstarMatter,
         firmId: SEED_IDS.northstarFirm,
         reference: 'NCL-2026-0017',
-        title: 'Clarke v Meridian Insurance',
-        clientName: 'Elaine Clarke',
-        matterType: 'Personal injury litigation',
-        stage: 'Disclosure',
+        title: 'Clarke v Meridian Housing',
+        clientName: 'Maya Clarke',
+        matterType: 'Housing conditions claim',
+        stage: 'Enquiry',
         riskLevel: 'high',
         ownerUserId: SEED_IDS.ava,
         openedAt: '2026-03-02',
         description:
-          'High-value personal injury claim concerning disputed causation and future loss.',
+          'Synthetic claimant housing conditions file for 18 Alder Court, Salford, M5 4QJ. Reported conditions include damp and mould, a defective bathroom extractor, a leaking bedroom window, damaged plaster and intermittent heating.',
       },
       now,
     );
@@ -473,11 +241,11 @@ export function seedDatabase(database: DatabaseSync): void {
       SEED_IDS.northstarFirm,
       SEED_IDS.northstarMatter,
       'client',
-      'Elaine Clarke',
+      'Maya Clarke',
       '',
-      'elaine.clarke@example.test',
+      'maya.clarke@example.test',
       '+44 7700 900123',
-      '42 Fielding Road, Leeds',
+      '18 Alder Court, Salford, M5 4QJ',
       'PC-10492',
       SEED_IDS.ava,
       now,
@@ -487,11 +255,11 @@ export function seedDatabase(database: DatabaseSync): void {
       SEED_IDS.northstarFirm,
       SEED_IDS.northstarMatter,
       'opponent',
-      'Meridian Insurance plc',
-      'Meridian Insurance plc',
-      'claims@meridian.example.test',
+      'Meridian Housing Association',
+      'Meridian Housing Association',
+      'repairs@meridian-housing.example.test',
       '+44 20 7946 0911',
-      '1 Meridian Square, London',
+      '1 Meridian Square, Manchester',
       'OP-8821',
       SEED_IDS.ava,
       now,
@@ -507,9 +275,9 @@ export function seedDatabase(database: DatabaseSync): void {
       SEED_IDS.disclosureTask,
       SEED_IDS.northstarFirm,
       SEED_IDS.northstarMatter,
-      'Serve disclosure list',
-      'Confirm privileged material has been excluded before service.',
-      '2026-07-14T16:00:00.000Z',
+      'Obtain missing heating repair records',
+      'Chase the landlord for the heating attendance and completion records.',
+      '2026-07-11T16:00:00.000Z',
       'urgent',
       'in_progress',
       SEED_IDS.ava,
@@ -521,9 +289,9 @@ export function seedDatabase(database: DatabaseSync): void {
       SEED_IDS.witnessTask,
       SEED_IDS.northstarFirm,
       SEED_IDS.northstarMatter,
-      'Approve orthopaedic expert letter',
-      'Review the revised questions with counsel comments.',
-      '2026-07-16T11:00:00.000Z',
+      'Approve Letter of Claim evidence schedule',
+      'Check the defects, notice chronology and disclosed repair records.',
+      '2026-07-14T11:00:00.000Z',
       'high',
       'open',
       SEED_IDS.ava,
@@ -535,9 +303,9 @@ export function seedDatabase(database: DatabaseSync): void {
       SEED_IDS.reviewTask,
       SEED_IDS.northstarFirm,
       SEED_IDS.northstarMatter,
-      'Review defendant disclosure',
-      'Flag gaps for the disclosure issues list.',
-      '2026-07-11T15:00:00.000Z',
+      'Review landlord repair disclosure',
+      'Flag missing complaint logs, inspections and work completion evidence.',
+      '2026-07-16T15:00:00.000Z',
       'high',
       'open',
       SEED_IDS.ben,
@@ -557,7 +325,7 @@ export function seedDatabase(database: DatabaseSync): void {
       SEED_IDS.northstarMatter,
       'matter.created',
       'Matter opened',
-      'The matter was opened from Proclaim reference NCL-2026-0017.',
+      'The synthetic housing conditions matter was opened from Proclaim reference NCL-2026-0017.',
       SEED_IDS.ava,
       '2026-03-02T09:15:00.000Z',
       '{}',
@@ -566,9 +334,9 @@ export function seedDatabase(database: DatabaseSync): void {
       '60000000-0000-4000-8000-000000000002',
       SEED_IDS.northstarFirm,
       SEED_IDS.northstarMatter,
-      'stage.changed',
-      'Moved to disclosure',
-      'Pleadings closed and the disclosure phase began.',
+      'evidence.recorded',
+      'Repair complaints collated',
+      'Synthetic complaint records, photographs and repair visits were added to the chronology.',
       SEED_IDS.ava,
       '2026-07-07T14:20:00.000Z',
       '{}',
@@ -578,8 +346,8 @@ export function seedDatabase(database: DatabaseSync): void {
       SEED_IDS.northstarFirm,
       SEED_IDS.northstarMatter,
       'task.created',
-      'Deadline added: Serve disclosure list',
-      'Due 14 July 2026 at 17:00.',
+      'Deadline added: Approve Letter of Claim evidence schedule',
+      'Due 14 July 2026 at 12:00.',
       SEED_IDS.ava,
       now,
       '{}',
@@ -590,4 +358,121 @@ export function seedDatabase(database: DatabaseSync): void {
     database.exec('ROLLBACK');
     throw error;
   }
+
+  seedWorkflowDefinitions(database, now);
+  seedHousingWorkflowMatter(database);
+}
+
+function seedHousingWorkflowMatter(database: DatabaseSync): void {
+  const workflowNow = () => new Date('2026-07-15T09:00:00.000Z');
+  const user: SessionUser = {
+    id: SEED_IDS.ava,
+    firmId: SEED_IDS.northstarFirm,
+    firmName: 'Northstar Legal',
+    email: 'ava@northstar.test',
+    name: 'Ava Morgan',
+    role: 'solicitor',
+  };
+  const workflowStore = new WorkflowStore(database, workflowNow);
+  const service = new WorkflowService(
+    new MatterStore(database, workflowNow),
+    workflowStore,
+    workflowNow,
+  );
+  workflowStore.instantiateMatterWorkflow(
+    user.firmId,
+    SEED_IDS.northstarMatter,
+    user.id,
+  );
+
+  const transitions = [
+    {
+      fromStageKey: 'enquiry',
+      toStageKey: 'assessment',
+      completedChecklistKeys: [
+        'initial_contact_recorded',
+        'conflict_check_completed',
+      ],
+      reason: 'Initial enquiry and conflict controls completed for assessment.',
+    },
+    {
+      fromStageKey: 'assessment',
+      toStageKey: 'onboarding',
+      completedChecklistKeys: [
+        'tenancy_confirmed',
+        'landlord_duty_screened',
+        'limitation_reviewed',
+        'merits_decision_recorded',
+      ],
+      reason: 'Merits, duty, limitation and proportionality review completed.',
+    },
+    {
+      fromStageKey: 'onboarding',
+      toStageKey: 'evidence',
+      completedChecklistKeys: [
+        'client_care_signed',
+        'authority_signed',
+        'id_checks_completed',
+        'funding_recorded',
+      ],
+      reason: 'Synthetic client-care, authority, identity and funding controls completed.',
+    },
+    {
+      fromStageKey: 'evidence',
+      toStageKey: 'protocol',
+      completedChecklistKeys: [
+        'defect_schedule_recorded',
+        'notice_evidence_recorded',
+        'photographs_recorded',
+        'letter_of_claim_sent',
+      ],
+      reason: 'Defect and notice evidence reviewed and the Letter of Claim sent.',
+    },
+  ] as const;
+
+  for (const transition of transitions) {
+    const workflow = workflowStore.getMatterWorkflow(
+      user.firmId,
+      SEED_IDS.northstarMatter,
+    );
+    if (!workflow) throw new Error('Seed workflow was not created');
+    const target = workflowStore
+      .listWorkflowStages(user.firmId, SEED_IDS.northstarMatter)
+      .find((stage) => stage.key === transition.toStageKey);
+    if (!target) throw new Error(`Seed stage ${transition.toStageKey} is missing`);
+    if (workflow.currentStage.position >= target.position) continue;
+    if (workflow.currentStage.key !== transition.fromStageKey) {
+      throw new Error(
+        `Seed workflow expected ${transition.fromStageKey} but found ${workflow.currentStage.key}`,
+      );
+    }
+    service.transitionStage(
+      user,
+      SEED_IDS.northstarMatter,
+      {
+        toStageKey: transition.toStageKey,
+        expectedVersion: workflow.version,
+        completedChecklistKeys: [...transition.completedChecklistKeys],
+        reason: transition.reason,
+      },
+      {
+        requestId: `seed-workflow-${transition.toStageKey}`,
+        ipAddress: '127.0.0.1',
+      },
+    );
+  }
+
+  service.confirmTrigger(
+    user,
+    SEED_IDS.northstarMatter,
+    {
+      eventType: 'letter_of_claim.received',
+      occurredOn: '2026-07-14',
+      idempotencyKey: 'seed-letter-of-claim-received-2026-07-14',
+    },
+    {
+      requestId: 'seed-workflow-letter-of-claim-received',
+      ipAddress: '127.0.0.1',
+    },
+  );
 }

@@ -1,9 +1,7 @@
 import {
   Activity,
   ArrowLeft,
-  CalendarClock,
   Check,
-  ChevronRight,
   ClipboardCheck,
   Download,
   FileCheck2,
@@ -26,25 +24,20 @@ import {
   ApiError,
   jsonBody,
   request,
+  type Matter360Data,
   type MatterAggregate,
+  type MatterSection,
+  type TransitionWorkflowCommand,
 } from '../api.js';
 import { Dialog } from '../components/Dialog.js';
-
-type Tab = 'overview' | 'people' | 'documents' | 'tasks' | 'activity' | 'audit';
+import { MatterHeader } from '../components/matter/MatterHeader.js';
+import { MatterSectionRail } from '../components/matter/MatterSectionRail.js';
+import { OperationalOverview } from '../components/matter/OperationalOverview.js';
 
 interface MatterPageProps {
   matterId: string;
   onBack: () => void;
 }
-
-const tabs: Array<{ id: Tab; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'people', label: 'People' },
-  { id: 'documents', label: 'Documents' },
-  { id: 'tasks', label: 'Tasks & deadlines' },
-  { id: 'activity', label: 'Activity' },
-  { id: 'audit', label: 'Audit' },
-];
 
 function formatDate(value: string, includeTime = false) {
   return new Intl.DateTimeFormat('en-GB', {
@@ -62,28 +55,64 @@ function formatBytes(bytes: number) {
 }
 
 export function MatterPage({ matterId, onBack }: MatterPageProps) {
+  const [summary, setSummary] = useState<Matter360Data>();
   const [aggregate, setAggregate] = useState<MatterAggregate>();
-  const [error, setError] = useState('');
-  const [tab, setTab] = useState<Tab>('overview');
+  const [summaryError, setSummaryError] = useState('');
+  const [aggregateError, setAggregateError] = useState('');
+  const [mutationError, setMutationError] = useState('');
+  const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
   const [documentOpen, setDocumentOpen] = useState(false);
   const [updatingTask, setUpdatingTask] = useState('');
 
-  const load = useCallback(async () => {
+  const loadSummary = useCallback(async (signal?: AbortSignal) => {
     try {
-      setError('');
-      setAggregate(await request<MatterAggregate>(`/api/matters/${matterId}`));
+      setSummaryError('');
+      setSummary(
+        await request<Matter360Data>(`/api/matters/${matterId}/summary`, {
+          signal,
+        }),
+      );
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Matter unavailable.');
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setSummaryError(
+        reason instanceof Error ? reason.message : 'Matter unavailable.',
+      );
     }
   }, [matterId]);
 
+  const loadAggregate = useCallback(async (signal?: AbortSignal) => {
+    try {
+      setAggregateError('');
+      setAggregate(
+        await request<MatterAggregate>(`/api/matters/${matterId}`, { signal }),
+      );
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setAggregateError(
+        reason instanceof Error
+          ? reason.message
+          : 'Matter records are unavailable.',
+      );
+    }
+  }, [matterId]);
+
+  const loadAll = useCallback(async (signal?: AbortSignal) => {
+    await Promise.all([loadSummary(signal), loadAggregate(signal)]);
+  }, [loadAggregate, loadSummary]);
+
   useEffect(() => {
+    const controller = new AbortController();
+    setSummary(undefined);
     setAggregate(undefined);
-    setTab('overview');
-    void load();
-  }, [load]);
+    setSummaryError('');
+    setAggregateError('');
+    setMutationError('');
+    setSection('overview');
+    void loadAll(controller.signal);
+    return () => controller.abort();
+  }, [loadAll]);
 
   const completeTask = async (taskId: string) => {
     setUpdatingTask(taskId);
@@ -92,96 +121,92 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         method: 'PATCH',
         body: jsonBody({ status: 'completed' }),
       });
-      await load();
+      await loadAll();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Task update failed.');
+      setMutationError(
+        reason instanceof Error ? reason.message : 'Task update failed.',
+      );
     } finally {
       setUpdatingTask('');
     }
   };
 
-  if (!aggregate && !error) {
+  const transitionWorkflow = async (command: TransitionWorkflowCommand) => {
+    await request(`/api/matters/${matterId}/workflow/transitions`, {
+      method: 'POST',
+      body: jsonBody(command),
+    });
+    await loadSummary();
+    void loadAggregate();
+  };
+
+  if (!summary && !summaryError) {
     return <main className="page matter-loading"><div className="skeleton skeleton--heading" /><div className="surface skeleton skeleton--matter" /></main>;
   }
 
-  if (!aggregate) {
+  if (!summary) {
     return (
       <main className="page page-state">
-        <FileText size={34} /><h1>Matter unavailable</h1><p>{error}</p>
-        <div className="button-row"><button className="button button--secondary" type="button" onClick={onBack}><ArrowLeft size={16} /> Back</button><button className="button button--primary" type="button" onClick={() => void load()}><RefreshCw size={16} /> Retry</button></div>
+        <FileText size={34} /><h1>Matter unavailable</h1><p>{summaryError}</p>
+        <div className="button-row"><button className="button button--secondary" type="button" onClick={onBack}><ArrowLeft size={16} /> Back</button><button className="button button--primary" type="button" onClick={() => void loadAll()}><RefreshCw size={16} /> Retry</button></div>
       </main>
     );
   }
 
-  const { matter } = aggregate;
-  const openTasks = aggregate.tasks.filter((task) => !['completed', 'cancelled'].includes(task.status));
+  const openTasks = aggregate
+    ? aggregate.tasks.filter(
+        (task) => !['completed', 'cancelled'].includes(task.status),
+      )
+    : summary.nextActions;
+  const sectionCounts: Partial<Record<MatterSection, number>> = aggregate
+    ? {
+        client_household: aggregate.parties.length,
+        documents: aggregate.documents.length,
+        tasks_calendar: openTasks.length,
+        chronology: aggregate.timeline.length,
+        audit: aggregate.audit.length,
+      }
+    : { tasks_calendar: summary.nextActions.length };
 
   return (
     <main className="page page--matter">
       <button className="back-link" type="button" onClick={onBack}><ArrowLeft size={16} /> Back to matters</button>
+      <MatterHeader data={summary} />
 
-      <header className="matter-header">
-        <div className="matter-header__main">
-          <div className="matter-header__topline">
-            <span className="reference-chip">{matter.reference}</span>
-            <span className={`risk-pill risk-pill--${matter.riskLevel}`}>{matter.riskLevel} risk</span>
-            <span className="status-pill"><span /> {matter.status}</span>
-          </div>
-          <h1>{matter.title}</h1>
-          <p><strong>{matter.clientName}</strong> <span>·</span> {matter.matterType}</p>
-        </div>
-        <dl className="matter-header__facts">
-          <div><dt>Stage</dt><dd>{matter.stage}</dd></div>
-          <div><dt>Owner</dt><dd>{matter.owner.name}</dd></div>
-          <div><dt>Next deadline</dt><dd>{matter.nextDeadline ? formatDate(matter.nextDeadline) : 'None set'}</dd></div>
-        </dl>
-      </header>
+      <div className="matter-workspace">
+        <MatterSectionRail
+          activeSection={section}
+          onSelect={setSection}
+          counts={sectionCounts}
+        />
+        <div className="matter-workspace__content">
+          {mutationError ? <div className="inline-notice inline-notice--error" role="alert">{mutationError}</div> : null}
+          {aggregateError && section !== 'overview' ? <div className="inline-notice inline-notice--error" role="alert">{aggregateError}</div> : null}
 
-      <nav className="matter-tabs" aria-label="Matter sections">
-        {tabs.map((item) => (
-          <button type="button" key={item.id} className={tab === item.id ? 'is-active' : ''} onClick={() => setTab(item.id)}>
-            {item.label}
-            {item.id === 'tasks' && openTasks.length ? <span>{openTasks.length}</span> : null}
-          </button>
-        ))}
-      </nav>
-
-      {error ? <div className="inline-notice inline-notice--error" role="alert">{error}</div> : null}
-
-      {tab === 'overview' ? (
-        <div className="matter-overview-grid">
-          <section className="surface matter-description">
-            <header className="section-header"><div><span className="eyebrow">Matter position</span><h2>Overview</h2></div></header>
-            <p>{matter.description || 'No matter description has been recorded.'}</p>
-            <dl className="detail-list">
-              <div><dt>Opened</dt><dd>{formatDate(matter.openedAt)}</dd></div>
-              <div><dt>Legacy source</dt><dd>{matter.externalSource ?? 'SwiftClaim native'}</dd></div>
-              <div><dt>Legacy ID</dt><dd>{matter.externalId ?? 'Not supplied'}</dd></div>
-            </dl>
-          </section>
-          <section className="surface next-actions">
-            <header className="section-header"><div><span className="eyebrow">Next actions</span><h2>Deadlines</h2></div><button type="button" onClick={() => setTab('tasks')}>View all <ChevronRight size={14} /></button></header>
-            {openTasks.slice(0, 3).map((task) => (
-              <div className="mini-task" key={task.id}>
-                <span className={`priority-marker priority-marker--${task.priority}`} />
-                <div><strong>{task.title}</strong><small>{task.assignee.name} · {formatDate(task.dueAt)}</small></div>
-              </div>
-            ))}
-            {!openTasks.length ? <div className="empty-state empty-state--compact"><Check size={24} /><strong>No open deadlines</strong></div> : null}
-          </section>
-          <section className="surface matter-metrics">
-            <div><span className="metric-icon"><UsersRound size={18} /></span><strong>{aggregate.parties.length}</strong><small>People & organisations</small></div>
-            <div><span className="metric-icon"><Paperclip size={18} /></span><strong>{aggregate.documents.length}</strong><small>Preserved documents</small></div>
-            <div><span className="metric-icon"><Activity size={18} /></span><strong>{aggregate.timeline.length}</strong><small>Timeline events</small></div>
-          </section>
-          <section className="surface recent-activity">
-            <header className="section-header"><div><span className="eyebrow">Chronology</span><h2>Recent activity</h2></div><button type="button" onClick={() => setTab('activity')}>Full timeline <ChevronRight size={14} /></button></header>
-            <Timeline events={aggregate.timeline.slice(0, 4)} />
-          </section>
-        </div>
+      {section === 'overview' ? (
+        <>
+          <OperationalOverview
+            data={summary}
+            onTransition={transitionWorkflow}
+            onViewTasks={() => setSection('tasks_calendar')}
+          />
+          {aggregate ? (
+            <div className="operational-overview__support">
+              <section className="surface matter-metrics">
+                <div><span className="metric-icon"><UsersRound size={18} /></span><strong>{aggregate.parties.length}</strong><small>People & organisations</small></div>
+                <div><span className="metric-icon"><Paperclip size={18} /></span><strong>{aggregate.documents.length}</strong><small>Preserved documents</small></div>
+                <div><span className="metric-icon"><Activity size={18} /></span><strong>{aggregate.timeline.length}</strong><small>Chronology events</small></div>
+              </section>
+              <section className="surface recent-activity">
+                <header className="section-header"><div><span className="eyebrow">Chronology</span><h2>Recent activity</h2></div><button type="button" onClick={() => setSection('chronology')}>Full chronology</button></header>
+                <Timeline events={aggregate.timeline.slice(0, 4)} />
+              </section>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
-      {tab === 'people' ? (
+      {aggregate && section === 'client_household' ? (
         <section className="surface tab-surface">
           <header className="section-header section-header--page"><div><span className="eyebrow">Matter contacts</span><h2>People & organisations</h2></div>{aggregate.permissions.canWrite ? <button className="button button--primary button--small" type="button" onClick={() => setPartyOpen(true)}><Plus size={16} /> Add party</button> : null}</header>
           {aggregate.parties.length ? <div className="people-grid">{aggregate.parties.map((party) => (
@@ -195,7 +220,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         </section>
       ) : null}
 
-      {tab === 'documents' ? (
+      {aggregate && section === 'documents' ? (
         <section className="surface tab-surface">
           <header className="section-header section-header--page"><div><span className="eyebrow">Evidence register</span><h2>Documents</h2></div>{aggregate.permissions.canWrite ? <button className="button button--primary button--small" type="button" onClick={() => setDocumentOpen(true)}><Upload size={16} /> Upload document</button> : null}</header>
           <div className="document-security"><ShieldCheck size={17} /><span>Every stored version is immutable and SHA-256 verified.</span></div>
@@ -210,7 +235,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         </section>
       ) : null}
 
-      {tab === 'tasks' ? (
+      {aggregate && section === 'tasks_calendar' ? (
         <section className="surface tab-surface">
           <header className="section-header section-header--page"><div><span className="eyebrow">Controlled work</span><h2>Tasks & deadlines</h2></div>{aggregate.permissions.canWrite ? <button className="button button--primary button--small" type="button" onClick={() => setTaskOpen(true)}><Plus size={16} /> Add deadline</button> : null}</header>
           {aggregate.tasks.length ? <div className="task-list">{aggregate.tasks.map((task) => (
@@ -224,18 +249,23 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         </section>
       ) : null}
 
-      {tab === 'activity' ? <section className="surface tab-surface"><header className="section-header section-header--page"><div><span className="eyebrow">Matter chronology</span><h2>Activity timeline</h2></div><span className="count-badge">{aggregate.timeline.length}</span></header><Timeline events={aggregate.timeline} /></section> : null}
+      {aggregate && section === 'chronology' ? <section className="surface tab-surface"><header className="section-header section-header--page"><div><span className="eyebrow">Matter chronology</span><h2>Activity timeline</h2></div><span className="count-badge">{aggregate.timeline.length}</span></header><Timeline events={aggregate.timeline} /></section> : null}
 
-      {tab === 'audit' ? (
+      {aggregate && section === 'audit' ? (
         <section className="surface tab-surface">
           <header className="section-header section-header--page"><div><span className="eyebrow">Append-only evidence</span><h2>Audit trail</h2></div><span className="audit-seal"><Fingerprint size={16} /> Protected</span></header>
           {aggregate.audit.length ? <div className="audit-list">{aggregate.audit.map((event) => <article key={event.id}><span className="audit-action">{event.action}</span><div><strong>{event.actorName}</strong><small>{event.entityType} · {event.entityId.slice(0, 8)}</small></div><time>{formatDate(event.createdAt, true)}</time><code>{event.requestId.slice(0, 12)}</code></article>)}</div> : <Empty icon={<Fingerprint />} title="No audited mutations yet" text="Changes made in SwiftClaim appear here and cannot be edited or deleted." />}
         </section>
       ) : null}
 
-      <AddPartyDialog open={partyOpen} matterId={matterId} onClose={() => setPartyOpen(false)} onSaved={load} />
-      <AddTaskDialog open={taskOpen} matterId={matterId} team={aggregate.team} onClose={() => setTaskOpen(false)} onSaved={load} />
-      <UploadDocumentDialog open={documentOpen} matterId={matterId} onClose={() => setDocumentOpen(false)} onSaved={load} />
+        </div>
+      </div>
+
+      {aggregate ? <>
+        <AddPartyDialog open={partyOpen} matterId={matterId} onClose={() => setPartyOpen(false)} onSaved={loadAll} />
+        <AddTaskDialog open={taskOpen} matterId={matterId} team={aggregate.team} onClose={() => setTaskOpen(false)} onSaved={loadAll} />
+        <UploadDocumentDialog open={documentOpen} matterId={matterId} onClose={() => setDocumentOpen(false)} onSaved={loadAll} />
+      </> : null}
     </main>
   );
 }

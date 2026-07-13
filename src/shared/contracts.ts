@@ -87,12 +87,42 @@ export const documentMetadataSchema = z.object({
   category: z.string().trim().min(2).max(120),
 });
 
+export const transitionWorkflowSchema = z.object({
+  toStageKey: z
+    .string()
+    .regex(/^[a-z][a-z0-9_]*$/)
+    .max(80),
+  expectedVersion: z.number().int().positive(),
+  completedChecklistKeys: z
+    .array(z.string().regex(/^[a-z][a-z0-9_]*$/).max(120))
+    .max(100)
+    .default([]),
+  reason: z.string().trim().min(10).max(1_000),
+  overrideReason: z.string().trim().min(10).max(1_000).optional(),
+});
+
+export const confirmWorkflowTriggerSchema = z.object({
+  eventType: z.enum([
+    'letter_of_claim.received',
+    'landlord_response.received',
+    'expert.inspection.completed',
+  ]),
+  occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  idempotencyKey: z.string().trim().min(8).max(200),
+});
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
 export type CreatePartyInput = z.infer<typeof createPartySchema>;
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
+export type TransitionWorkflowInput = z.infer<
+  typeof transitionWorkflowSchema
+>;
+export type ConfirmWorkflowTriggerInput = z.infer<
+  typeof confirmWorkflowTriggerSchema
+>;
 
 export interface ApiErrorBody {
   error: {

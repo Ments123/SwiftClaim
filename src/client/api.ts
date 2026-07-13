@@ -7,6 +7,9 @@ export interface CurrentUser {
   permissions: {
     canCreateMatter: boolean;
     canViewAdministration: boolean;
+    canTransitionWorkflow: boolean;
+    canOverrideWorkflow: boolean;
+    canConfirmDeadline: boolean;
   };
 }
 
@@ -130,12 +133,92 @@ export interface DashboardData {
   team: TeamMember[];
 }
 
+export interface MatterWorkflowStage {
+  key: string;
+  name: string;
+  position: number;
+  description: string;
+  requiredChecklistKeys: string[];
+  state: 'completed' | 'current' | 'upcoming';
+}
+
+export interface MatterWorkflowBlocker {
+  key: string;
+  label: string;
+  severity: 'warning' | 'critical';
+}
+
+export interface MatterLegalDeadline {
+  id: string;
+  title: string;
+  triggerDate: string;
+  dueDate: string;
+  status: 'pending' | 'satisfied' | 'superseded' | 'cancelled';
+  explanation: string;
+  sourceTitle: string;
+  sourceUrl: string;
+  ruleKey: string;
+}
+
+export interface Matter360Data {
+  matter: MatterSummary;
+  workflow: {
+    id: string;
+    version: number;
+    definitionVersion: number;
+    name: string;
+    currentStageKey: string;
+    currentStagePosition: number;
+    stages: MatterWorkflowStage[];
+    completedChecklistKeys: string[];
+    blockers: MatterWorkflowBlocker[];
+  };
+  deadlines: MatterLegalDeadline[];
+  nextActions: MatterTask[];
+  alerts: Array<{
+    key: string;
+    severity: 'warning' | 'critical';
+    title: string;
+    detail: string;
+  }>;
+  permissions: {
+    canWrite: boolean;
+    canTransition: boolean;
+    canOverrideWorkflow: boolean;
+  };
+}
+
+export type MatterSection =
+  | 'overview'
+  | 'client_household'
+  | 'property_tenancy'
+  | 'defects_repairs'
+  | 'evidence'
+  | 'documents'
+  | 'communications'
+  | 'protocol_experts'
+  | 'damages_offers'
+  | 'proceedings'
+  | 'tasks_calendar'
+  | 'time_finance'
+  | 'chronology'
+  | 'audit';
+
+export interface TransitionWorkflowCommand {
+  toStageKey: string;
+  expectedVersion: number;
+  completedChecklistKeys: string[];
+  reason: string;
+  overrideReason?: string;
+}
+
 interface ErrorPayload {
   error?: {
     code?: string;
     message?: string;
     fields?: Record<string, string[]>;
   };
+  details?: Record<string, unknown>;
 }
 
 export class ApiError extends Error {
@@ -144,6 +227,7 @@ export class ApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly fields?: Record<string, string[]>,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -173,6 +257,7 @@ export async function request<T>(
       payload?.error?.code ?? 'REQUEST_FAILED',
       payload?.error?.message ?? 'The request could not be completed.',
       payload?.error?.fields,
+      payload?.details,
     );
   }
   return payload as T;

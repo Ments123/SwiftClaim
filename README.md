@@ -1,8 +1,8 @@
 # SwiftClaim Litigation
 
-SwiftClaim Litigation is the first working slice of a modern, AI-ready litigation operating system. Step 1 establishes the secure matter spine that every later capability—SwiftBridge migration, document intelligence, calling, communications, billing, and automation—will depend on.
+SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine with the first operational Housing Conditions workflow and Matter 360 workspace. It is not yet the complete case-management programme.
 
-This repository contains a real full-stack application, not a static prototype. The React interface uses a Fastify API, a durable SQLite database, private file storage, secure sessions, firm and matter-level access rules, and append-only evidential records.
+This repository contains a real full-stack application, not a static prototype. The React interface uses a Fastify API, a durable SQLite database, private file storage, secure sessions, firm and matter-level access rules, versioned workflows, explainable deadline calculations, and append-only evidential records.
 
 ## What works now
 
@@ -14,9 +14,30 @@ This repository contains a real full-stack application, not a static prototype. 
 - parties, tasks, assignments, completion history, and matter chronology;
 - private document upload, SHA-256 hashing, immutable version rows, and authorised downloads;
 - append-only audit records protected by database triggers;
+- ordered, transactional database migrations;
 - responsive desktop, tablet, and mobile interface;
 - seeded two-firm evaluation dataset;
 - automated domain, security, API, client, and production-build checks.
+
+### Housing Conditions workflow foundation
+
+- Matter 360 operational overview with the matter header, active alerts, next actions, workflow readiness, and protocol deadlines;
+- claimant-side England workflow covering Enquiry, Assessment, Onboarding, Evidence and notice, Pre-Action Protocol, Expert evidence, Repairs and quantum, Negotiation, Proceedings, Settlement, and Closure;
+- controlled stage progression with required checklist controls, explicit reasons, optimistic concurrency, role-based overrides, and immutable stage history;
+- user-confirmed legal trigger events—SwiftClaim does not infer that a protocol event occurred merely because a document exists;
+- versioned workflow definitions, deadline rules, and business calendars so a live matter remains tied to the rule set used at the time;
+- immutable deadlines with calculation explanations, source references, status history, generated tasks, audit entries, domain events, and an integration outbox;
+- a realistic synthetic evaluation matter, `Clarke v Meridian Housing`, for claimant Maya Clarke at 18 Alder Court, Salford.
+
+The initial deadline rules are grounded in the official [Pre-Action Protocol for Housing Conditions Claims (England)](https://www.justice.gov.uk/courts/procedure-rules/civil/protocol/prot_hou):
+
+| Confirmed event | SwiftClaim calculation |
+|---|---|
+| Letter of Claim received | Landlord response due after 20 working days |
+| Landlord response received | Expert inspection due after 20 working days |
+| Expert inspection completed | Expert report or agreed schedule due after 10 working days |
+
+Working-day calculations exclude weekends and configured England and Wales bank holidays. Every result is presented as a calculation to verify before reliance, with its trigger date, excluded-day count, rule version, calendar, and official source retained for review. Rules and calendars must be reviewed whenever the protocol or bank-holiday position changes.
 
 ## Quick start
 
@@ -43,7 +64,7 @@ All seeded users use the password `SwiftClaim!2026`.
 | Priya Shah | `finance@northstar.test` | Firm-wide read-only access |
 | Lewis Grant | `lewis@southbank.test` | Separate Southbank firm tenant |
 
-Use Ava for the main workflow. Use Marcus to open a matter. Use Lewis to verify that Northstar matter UUIDs and documents remain invisible across firms.
+Use Ava for the main Housing Conditions workflow and open `Clarke v Meridian Housing`. Use Marcus to create a matter or test partner-only workflow overrides. Use Lewis to verify that Northstar matter UUIDs, summaries, deadlines, and documents remain invisible across firms. All names, addresses, organisations, and claim details in the seed are synthetic and evaluation-only.
 
 ## Commands
 
@@ -66,15 +87,17 @@ Then open `http://127.0.0.1:4100`.
 
 ## Architecture
 
-SwiftClaim Step 1 is a modular monolith. That keeps transactions, tenant controls, and deployment simple while the domain is still being discovered with the test firm.
+SwiftClaim is a modular monolith. That keeps workflow transitions, deadline creation, tenant controls, and audit records inside one database transaction while the domain is still being validated with the test firm.
 
 ```mermaid
-flowchart LR
+flowchart TD
   Browser[React client] --> API[Fastify application]
-  API --> Policy[Session and matter policy]
-  Policy --> Store[Tenant-scoped store]
-  Store --> DB[(SQLite adapter)]
-  Store --> Files[Private file storage]
+  API --> Policy[Session and capability policy]
+  Policy --> Matter["Matter service and store"]
+  Policy --> Workflow["Workflow service and store"]
+  Matter --> DB[(SQLite adapter)]
+  Workflow --> DB
+  Matter --> Files[Private file storage]
 ```
 
 The boundaries are deliberately portable:
@@ -82,7 +105,9 @@ The boundaries are deliberately portable:
 - `src/shared/contracts.ts` owns validated request contracts;
 - `src/server/policy.ts` owns role decisions;
 - `src/server/store.ts` owns tenant-scoped matter operations;
+- `src/server/workflow/` owns workflow definitions, working-day calculations, transitions, deadlines, and Matter 360 orchestration;
 - `src/server/storage.ts` owns immutable bytes and hashes;
+- `src/server/migrations/` owns ordered schema evolution;
 - `src/server/app.ts` maps HTTP requests to those boundaries;
 - `src/client/` consumes only the public `/api` contracts.
 
@@ -127,6 +152,9 @@ The approved Step 1 design and implementation plan are in `docs/superpowers/`.
 | `GET` | `/api/matters` | Accessible matters and search |
 | `POST` | `/api/matters` | Create a matter as partner/admin |
 | `GET` | `/api/matters/:id` | Full authorised matter aggregate |
+| `GET` | `/api/matters/:id/summary` | Matter 360 workflow, deadlines, alerts, and next actions |
+| `POST` | `/api/matters/:id/workflow/transitions` | Progress a workflow with readiness and version controls |
+| `POST` | `/api/matters/:id/workflow/triggers` | Confirm a legal event and calculate its governed deadline |
 | `POST` | `/api/matters/:id/parties` | Add a matter party |
 | `POST` | `/api/matters/:id/tasks` | Add a task or deadline |
 | `PATCH` | `/api/matters/:id/tasks/:taskId` | Update task state |
@@ -152,12 +180,14 @@ Copy `.env.example` values into your process environment. The application does n
 
 ## Live-data boundary
 
-Step 1 is suitable for product evaluation with synthetic or properly anonymised data. It is not approved for live client material.
+The current build is suitable for product evaluation with synthetic or properly anonymised data. It is not approved for live client material, and its deadline calculations are not a substitute for solicitor review.
 
 Before a live pilot, replace the evaluation adapters with managed PostgreSQL and encrypted object storage, add SSO and MFA, managed secrets, malware scanning, encrypted and tested backups, centralised audit export, monitoring and alerting, retention and legal-hold policies, vulnerability management, penetration testing, DPIA/data-flow documentation, and the firm's approved regulatory controls.
 
 ## Next build
 
-The next product slice should be SwiftBridge discovery and import rehearsal against an anonymised export from the test firm's Proclaim environment. It should produce a source inventory, mapping rules, document manifest, reconciliation totals, exception queue, and repeatable dry-run report before any cutover tooling is attempted.
+The next case-management slice is Intake and Onboarding for claimant Housing Conditions work: enquiry capture, conflict checks, eligibility and merits screening, limitation review, property and tenancy facts, landlord identification, vulnerabilities and reasonable adjustments, identity checks, client care, authority, funding, risk, acceptance or decline, and automatic creation of the governed matter workflow.
 
-Once that data path is trustworthy, the next user-facing layer is cited document intelligence: OCR, disclosure-set ingestion, page-level retrieval, cited summaries, chronology extraction, and approval-gated drafting. AI output should remain a versioned suggestion linked to its source evidence, never an untracked mutation of the matter record.
+That is followed by the remaining CMS programme: deeper evidence and defect schedules, correspondence and document production, expert instruction and inspection control, repairs and quantum, offers and settlement authority, proceedings, costs and billing, closure, reporting, integrations, and supervised AI assistance.
+
+SwiftBridge is deliberately deferred until the operational case-management model is sufficiently complete to receive Proclaim data without flattening or losing it. The current external identifiers, import-batch fields, file hashes, audit model, and integration outbox preserve the migration seam. When SwiftBridge begins, its first deliverable should be an anonymised discovery and dry-run import with source inventory, mappings, document manifest, reconciliation totals, and an exception queue before any live cutover.

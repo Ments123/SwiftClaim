@@ -23,7 +23,7 @@ import {
   type ApiErrorBody,
   type FirmRole,
 } from '../shared/contracts.js';
-import { canCreateMatter, type SessionUser } from './policy.js';
+import { canCreateMatter, hasCapability, type SessionUser } from './policy.js';
 import {
   createSessionToken,
   hashPassword,
@@ -39,6 +39,9 @@ import {
   UploadTooLargeError,
   type StoredFile,
 } from './storage.js';
+import { workflowRoutes } from './workflow/routes.js';
+import { WorkflowService } from './workflow/service.js';
+import { WorkflowStore } from './workflow/store.js';
 
 const SESSION_COOKIE = 'swiftclaim_session';
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1_000;
@@ -89,7 +92,10 @@ function publicUser(user: SessionUser) {
     firm: { id: user.firmId, name: user.firmName },
     permissions: {
       canCreateMatter: canCreateMatter(user),
-      canViewAdministration: user.role === 'admin' || user.role === 'partner',
+      canViewAdministration: hasCapability(user, 'administration.view'),
+      canTransitionWorkflow: hasCapability(user, 'workflow.transition'),
+      canOverrideWorkflow: hasCapability(user, 'workflow.override'),
+      canConfirmDeadline: hasCapability(user, 'deadline.confirm'),
     },
   };
 }
@@ -105,6 +111,8 @@ export async function buildApp(
   const now = options.now ?? (() => new Date());
   const isProduction = options.isProduction ?? false;
   const matterStore = new MatterStore(database, now);
+  const workflowStore = new WorkflowStore(database, now);
+  const workflowService = new WorkflowService(matterStore, workflowStore, now);
   const dummyPasswordHash = hashPassword('invalid-password-value');
 
   await app.register(cookie);
@@ -474,6 +482,15 @@ export async function buildApp(
       return reply.send(openStoredFile(options.storagePath, file.storageKey));
     },
   );
+
+  await app.register(workflowRoutes, {
+    service: workflowService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
 
   return app;
 }
