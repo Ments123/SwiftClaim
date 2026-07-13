@@ -5,10 +5,26 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
-    environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}'],
     coverage: {
       reporter: ['text', 'html'],
     },
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'server',
+          environment: 'node',
+          include: ['src/server/**/*.test.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'client',
+          environment: 'jsdom',
+          include: ['src/client/**/*.test.tsx'],
+        },
+      },
+    ],
   },
 });
