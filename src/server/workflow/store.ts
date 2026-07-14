@@ -62,6 +62,13 @@ export interface WorkflowBlocker {
   severity: 'warning' | 'critical';
 }
 
+export interface BootstrapIntakeWorkflowInput {
+  firmId: string;
+  matterId: string;
+  actorUserId: string;
+  occurredAt: string;
+}
+
 export class WorkflowStateConflictError extends Error {
   constructor() {
     super('The workflow was changed by another request');
@@ -151,6 +158,48 @@ export class WorkflowStore {
     private readonly now: () => Date,
   ) {}
 
+  private requireMatterAndActor(
+    firmId: string,
+    matterId: string,
+    actorUserId: string,
+  ): void {
+    const validMatterAndActor = row(
+      this.database
+        .prepare(
+          `SELECT m.id
+           FROM matters m
+           JOIN users u ON u.id = ? AND u.firm_id = m.firm_id AND u.active = 1
+           WHERE m.id = ? AND m.firm_id = ?`,
+        )
+        .get(actorUserId, matterId, firmId),
+    );
+    if (!validMatterAndActor) {
+      throw new Error('Matter or actor not found in firm');
+    }
+  }
+
+  private activeHousingWorkflowVersion(effectiveOn: string): Row {
+    const version = row(
+      this.database
+        .prepare(
+          `SELECT wv.id, wv.version
+           FROM workflow_versions wv
+           JOIN workflow_templates wt ON wt.id = wv.template_id
+           WHERE wt.key = ?
+             AND wv.status = 'active'
+             AND wv.effective_from <= ?
+             AND (wv.effective_to IS NULL OR wv.effective_to >= ?)
+           ORDER BY wv.version DESC
+           LIMIT 1`,
+        )
+        .get(HOUSING_DISREPAIR_WORKFLOW.key, effectiveOn, effectiveOn),
+    );
+    if (!version) {
+      throw new Error('No active housing conditions workflow is configured');
+    }
+    return version;
+  }
+
   instantiateMatterWorkflow(
     firmId: string,
     matterId: string,
@@ -161,38 +210,8 @@ export class WorkflowStore {
 
     this.database.exec('BEGIN IMMEDIATE');
     try {
-      const validMatterAndActor = row(
-        this.database
-          .prepare(
-            `SELECT m.id
-             FROM matters m
-             JOIN users u ON u.id = ? AND u.firm_id = m.firm_id AND u.active = 1
-             WHERE m.id = ? AND m.firm_id = ?`,
-          )
-          .get(actorUserId, matterId, firmId),
-      );
-      if (!validMatterAndActor) {
-        throw new Error('Matter or actor not found in firm');
-      }
-
-      const version = row(
-        this.database
-          .prepare(
-            `SELECT wv.id, wv.version
-             FROM workflow_versions wv
-             JOIN workflow_templates wt ON wt.id = wv.template_id
-             WHERE wt.key = ?
-               AND wv.status = 'active'
-               AND wv.effective_from <= ?
-               AND (wv.effective_to IS NULL OR wv.effective_to >= ?)
-             ORDER BY wv.version DESC
-             LIMIT 1`,
-          )
-          .get(HOUSING_DISREPAIR_WORKFLOW.key, effectiveOn, effectiveOn),
-      );
-      if (!version) {
-        throw new Error('No active housing conditions workflow is configured');
-      }
+      this.requireMatterAndActor(firmId, matterId, actorUserId);
+      const version = this.activeHousingWorkflowVersion(effectiveOn);
 
       const firstStage = row(
         this.database
@@ -257,6 +276,124 @@ export class WorkflowStore {
       this.database.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  bootstrapFromIntakeInTransaction(
+    input: BootstrapIntakeWorkflowInput,
+  ): MatterWorkflowRecord {
+    this.requireMatterAndActor(
+      input.firmId,
+      input.matterId,
+      input.actorUserId,
+    );
+    const version = this.activeHousingWorkflowVersion(
+      input.occurredAt.slice(0, 10),
+    );
+    const stages = rows(
+      this.database
+        .prepare(
+          `SELECT key, position, required_checklist_json AS requiredChecklistJson
+           FROM workflow_stages
+           WHERE workflow_version_id = ? AND position <= 3
+           ORDER BY position`,
+        )
+        .all(String(version.id)),
+    );
+    const expectedStages = ['enquiry', 'assessment', 'onboarding', 'evidence'];
+    if (
+      stages.length !== expectedStages.length ||
+      stages.some((stage, index) => String(stage.key) !== expectedStages[index])
+    ) {
+      throw new Error(
+        'The active housing conditions workflow cannot bootstrap intake at Evidence',
+      );
+    }
+
+    const workflowId = randomUUID();
+    this.database
+      .prepare(
+        `INSERT INTO matter_workflows (
+           id, firm_id, matter_id, workflow_version_id, current_stage_key,
+           version, started_at, updated_at
+         ) VALUES (?, ?, ?, ?, 'evidence', 4, ?, ?)`,
+      )
+      .run(
+        workflowId,
+        input.firmId,
+        input.matterId,
+        String(version.id),
+        input.occurredAt,
+        input.occurredAt,
+      );
+
+    const insertHistory = this.database.prepare(
+      `INSERT INTO matter_stage_history (
+         id, firm_id, matter_id, matter_workflow_id, from_stage_key,
+         to_stage_key, reason, actor_user_id, occurred_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const transitions = [
+      {
+        from: null,
+        to: 'enquiry',
+        reason: 'Enquiry captured in SwiftClaim intake.',
+      },
+      {
+        from: 'enquiry',
+        to: 'assessment',
+        reason: 'Conflict and initial enquiry controls completed.',
+      },
+      {
+        from: 'assessment',
+        to: 'onboarding',
+        reason: 'Reviewed legal assessment approved the enquiry to proceed.',
+      },
+      {
+        from: 'onboarding',
+        to: 'evidence',
+        reason: 'Client onboarding completed and the matter was opened.',
+      },
+    ] as const;
+    for (const transition of transitions) {
+      insertHistory.run(
+        randomUUID(),
+        input.firmId,
+        input.matterId,
+        workflowId,
+        transition.from,
+        transition.to,
+        transition.reason,
+        input.actorUserId,
+        input.occurredAt,
+      );
+    }
+
+    const insertChecklist = this.database.prepare(
+      `INSERT INTO matter_workflow_checklist (
+         id, firm_id, matter_id, matter_workflow_id, checklist_key,
+         completed_by, completed_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const stage of stages.slice(0, 3)) {
+      const checklistKeys = JSON.parse(
+        String(stage.requiredChecklistJson),
+      ) as string[];
+      for (const checklistKey of checklistKeys) {
+        insertChecklist.run(
+          randomUUID(),
+          input.firmId,
+          input.matterId,
+          workflowId,
+          checklistKey,
+          input.actorUserId,
+          input.occurredAt,
+        );
+      }
+    }
+
+    const result = this.getMatterWorkflow(input.firmId, input.matterId);
+    if (!result) throw new Error('Intake workflow could not be bootstrapped');
+    return result;
   }
 
   getMatterWorkflow(

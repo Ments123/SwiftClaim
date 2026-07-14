@@ -41,7 +41,7 @@ const SECTION_ITEMS: ReadonlyArray<{
     id: 'property_tenancy',
     label: 'Property & tenancy',
     icon: Building2,
-    available: false,
+    available: true,
   },
   {
     id: 'defects_repairs',

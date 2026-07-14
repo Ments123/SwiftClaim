@@ -2,11 +2,13 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import { secureMatterSpineMigration } from './001-secure-matter-spine.js';
 import { workflowFoundationMigration } from './002-workflow-foundation.js';
+import { intakeOnboardingMigration } from './003-intake-onboarding.js';
 import type { Migration } from './types.js';
 
 export const migrations: Migration[] = [
   secureMatterSpineMigration,
   workflowFoundationMigration,
+  intakeOnboardingMigration,
 ];
 
 export function runMigrations(

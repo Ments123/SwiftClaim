@@ -16,6 +16,11 @@ export type Capability =
   | 'workflow.transition'
   | 'workflow.override'
   | 'deadline.confirm'
+  | 'intake.read'
+  | 'intake.write'
+  | 'intake.decide'
+  | 'intake.override_conflict'
+  | 'intake.convert'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -26,6 +31,11 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'workflow.transition',
     'workflow.override',
     'deadline.confirm',
+    'intake.read',
+    'intake.write',
+    'intake.decide',
+    'intake.override_conflict',
+    'intake.convert',
     'administration.view',
   ],
   partner: [
@@ -35,6 +45,11 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'workflow.transition',
     'workflow.override',
     'deadline.confirm',
+    'intake.read',
+    'intake.write',
+    'intake.decide',
+    'intake.override_conflict',
+    'intake.convert',
     'administration.view',
   ],
   solicitor: [
@@ -42,12 +57,18 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'matter.write',
     'workflow.transition',
     'deadline.confirm',
+    'intake.read',
+    'intake.write',
+    'intake.decide',
+    'intake.convert',
   ],
   paralegal: [
     'matter.read',
     'matter.write',
     'workflow.transition',
     'deadline.confirm',
+    'intake.read',
+    'intake.write',
   ],
   finance: ['matter.read'],
   readonly: ['matter.read'],

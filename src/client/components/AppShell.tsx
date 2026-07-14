@@ -2,6 +2,7 @@ import {
   BriefcaseBusiness,
   CalendarDays,
   ChevronLeft,
+  ClipboardList,
   LogOut,
   Menu,
   Scale,
@@ -14,9 +15,10 @@ import type { CurrentUser } from '../api.js';
 
 interface AppShellProps {
   user: CurrentUser;
-  page: 'dashboard' | 'matter';
+  page: 'dashboard' | 'intake' | 'enquiry' | 'matter';
   matterReference?: string;
   onDashboard: () => void;
+  onIntake: () => void;
   onLogout: () => void;
   children: ReactNode;
 }
@@ -34,6 +36,7 @@ export function AppShell({
   page,
   matterReference,
   onDashboard,
+  onIntake,
   onLogout,
   children,
 }: AppShellProps) {
@@ -42,6 +45,11 @@ export function AppShell({
   const navigateDashboard = () => {
     setMobileOpen(false);
     onDashboard();
+  };
+
+  const navigateIntake = () => {
+    setMobileOpen(false);
+    onIntake();
   };
 
   const sidebar = (
@@ -66,6 +74,20 @@ export function AppShell({
           <CalendarDays size={18} aria-hidden="true" />
           <span>Today</span>
         </button>
+        {user.permissions.canAccessIntake ? (
+          <button
+            type="button"
+            className={
+              page === 'intake' || page === 'enquiry'
+                ? 'navigation-item is-active'
+                : 'navigation-item'
+            }
+            onClick={navigateIntake}
+          >
+            <ClipboardList size={18} aria-hidden="true" />
+            <span>Enquiries</span>
+          </button>
+        ) : null}
         <button
           type="button"
           className={page === 'matter' ? 'navigation-item is-active' : 'navigation-item'}
@@ -128,8 +150,8 @@ export function AppShell({
             </span>
             <strong>SwiftClaim</strong>
           </div>
-          {page === 'matter' ? (
-            <button className="icon-button" type="button" onClick={navigateDashboard} aria-label="Back to dashboard">
+          {page === 'matter' || page === 'enquiry' ? (
+            <button className="icon-button" type="button" onClick={page === 'enquiry' ? navigateIntake : navigateDashboard} aria-label={page === 'enquiry' ? 'Back to enquiries' : 'Back to dashboard'}>
               <ChevronLeft size={20} aria-hidden="true" />
             </button>
           ) : (

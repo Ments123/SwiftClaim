@@ -7,10 +7,7 @@ import {
   FileCheck2,
   FileText,
   Fingerprint,
-  Mail,
-  MapPin,
   Paperclip,
-  Phone,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -26,13 +23,16 @@ import {
   request,
   type Matter360Data,
   type MatterAggregate,
+  type MatterIntakeProfile,
   type MatterSection,
   type TransitionWorkflowCommand,
 } from '../api.js';
 import { Dialog } from '../components/Dialog.js';
+import { ClientHouseholdPanel } from '../components/matter/ClientHouseholdPanel.js';
 import { MatterHeader } from '../components/matter/MatterHeader.js';
 import { MatterSectionRail } from '../components/matter/MatterSectionRail.js';
 import { OperationalOverview } from '../components/matter/OperationalOverview.js';
+import { PropertyTenancyPanel } from '../components/matter/PropertyTenancyPanel.js';
 
 interface MatterPageProps {
   matterId: string;
@@ -59,6 +59,10 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [aggregate, setAggregate] = useState<MatterAggregate>();
   const [summaryError, setSummaryError] = useState('');
   const [aggregateError, setAggregateError] = useState('');
+  const [intakeProfile, setIntakeProfile] = useState<MatterIntakeProfile | null>();
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileRetryVersion, setProfileRetryVersion] = useState(0);
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
@@ -108,11 +112,48 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setAggregate(undefined);
     setSummaryError('');
     setAggregateError('');
+    setIntakeProfile(undefined);
+    setProfileLoading(false);
+    setProfileError('');
+    setProfileRetryVersion(0);
     setMutationError('');
     setSection('overview');
     void loadAll(controller.signal);
     return () => controller.abort();
   }, [loadAll]);
+
+  const profileSectionActive =
+    section === 'client_household' || section === 'property_tenancy';
+
+  useEffect(() => {
+    if (!profileSectionActive || intakeProfile !== undefined || profileError) return;
+    const controller = new AbortController();
+    setProfileLoading(true);
+    request<{ profile: MatterIntakeProfile }>(
+      `/api/matters/${matterId}/intake-profile`,
+      { signal: controller.signal },
+    )
+      .then((response) => setIntakeProfile(response.profile))
+      .catch((reason) => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        if (reason instanceof ApiError && reason.status === 404) {
+          setIntakeProfile(null);
+          return;
+        }
+        setProfileError('The converted intake profile is unavailable.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setProfileLoading(false);
+      });
+    return () => controller.abort();
+  }, [intakeProfile, matterId, profileError, profileRetryVersion, profileSectionActive]);
+
+  const retryProfile = () => {
+    setIntakeProfile(undefined);
+    setProfileLoading(false);
+    setProfileError('');
+    setProfileRetryVersion((version) => version + 1);
+  };
 
   const completeTask = async (taskId: string) => {
     setUpdatingTask(taskId);
@@ -181,7 +222,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         />
         <div className="matter-workspace__content">
           {mutationError ? <div className="inline-notice inline-notice--error" role="alert">{mutationError}</div> : null}
-          {aggregateError && section !== 'overview' ? <div className="inline-notice inline-notice--error" role="alert">{aggregateError}</div> : null}
+          {aggregateError && section !== 'overview' && section !== 'property_tenancy' ? <div className="inline-notice inline-notice--error" role="alert">{aggregateError}</div> : null}
 
       {section === 'overview' ? (
         <>
@@ -206,18 +247,25 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         </>
       ) : null}
 
-      {aggregate && section === 'client_household' ? (
-        <section className="surface tab-surface">
-          <header className="section-header section-header--page"><div><span className="eyebrow">Matter contacts</span><h2>People & organisations</h2></div>{aggregate.permissions.canWrite ? <button className="button button--primary button--small" type="button" onClick={() => setPartyOpen(true)}><Plus size={16} /> Add party</button> : null}</header>
-          {aggregate.parties.length ? <div className="people-grid">{aggregate.parties.map((party) => (
-            <article className="person-card" key={party.id}>
-              <div className="person-card__header"><span className="person-icon"><UserRound size={18} /></span><span><small>{party.kind}</small><strong>{party.name}</strong></span></div>
-              {party.organisation ? <p>{party.organisation}</p> : null}
-              <ul>{party.email ? <li><Mail size={14} /> {party.email}</li> : null}{party.phone ? <li><Phone size={14} /> {party.phone}</li> : null}{party.address ? <li><MapPin size={14} /> {party.address}</li> : null}</ul>
-              {party.externalId ? <footer>Legacy ID · {party.externalId}</footer> : null}
-            </article>
-          ))}</div> : <Empty icon={<UsersRound />} title="No parties recorded" text="Add the client, opponent, experts and other matter participants." />}
-        </section>
+      {section === 'client_household' ? (
+        <ClientHouseholdPanel
+          profile={intakeProfile}
+          loading={profileLoading}
+          error={profileError}
+          parties={aggregate?.parties ?? []}
+          canWrite={aggregate?.permissions.canWrite ?? false}
+          onAddParty={() => setPartyOpen(true)}
+          onRetry={retryProfile}
+        />
+      ) : null}
+
+      {section === 'property_tenancy' ? (
+        <PropertyTenancyPanel
+          profile={intakeProfile}
+          loading={profileLoading}
+          error={profileError}
+          onRetry={retryProfile}
+        />
       ) : null}
 
       {aggregate && section === 'documents' ? (

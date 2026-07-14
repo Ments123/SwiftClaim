@@ -23,6 +23,10 @@ import {
   type ApiErrorBody,
   type FirmRole,
 } from '../shared/contracts.js';
+import { IntakeConflictService } from './intake/conflicts.js';
+import { intakeRoutes } from './intake/routes.js';
+import { IntakeService } from './intake/service.js';
+import { IntakeStore } from './intake/store.js';
 import { canCreateMatter, hasCapability, type SessionUser } from './policy.js';
 import {
   createSessionToken,
@@ -96,6 +100,11 @@ function publicUser(user: SessionUser) {
       canTransitionWorkflow: hasCapability(user, 'workflow.transition'),
       canOverrideWorkflow: hasCapability(user, 'workflow.override'),
       canConfirmDeadline: hasCapability(user, 'deadline.confirm'),
+      canAccessIntake: hasCapability(user, 'intake.read'),
+      canWriteIntake: hasCapability(user, 'intake.write'),
+      canDecideIntake: hasCapability(user, 'intake.decide'),
+      canOverrideConflict: hasCapability(user, 'intake.override_conflict'),
+      canConvertIntake: hasCapability(user, 'intake.convert'),
     },
   };
 }
@@ -113,6 +122,14 @@ export async function buildApp(
   const matterStore = new MatterStore(database, now);
   const workflowStore = new WorkflowStore(database, now);
   const workflowService = new WorkflowService(matterStore, workflowStore, now);
+  const intakeStore = new IntakeStore(database, now);
+  const intakeService = new IntakeService(
+    database,
+    intakeStore,
+    now,
+    workflowStore,
+  );
+  const intakeConflicts = new IntakeConflictService(database, intakeStore, now);
   const dummyPasswordHash = hashPassword('invalid-password-value');
 
   await app.register(cookie);
@@ -485,6 +502,17 @@ export async function buildApp(
 
   await app.register(workflowRoutes, {
     service: workflowService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(intakeRoutes, {
+    store: intakeStore,
+    service: intakeService,
+    conflicts: intakeConflicts,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,

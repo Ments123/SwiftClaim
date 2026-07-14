@@ -1,6 +1,6 @@
 # SwiftClaim Litigation
 
-SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine with the first operational Housing Conditions workflow and Matter 360 workspace. It is not yet the complete case-management programme.
+SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine, governed claimant intake and onboarding, atomic matter opening, the first operational Housing Conditions workflow, and a Matter 360 workspace. It is not yet the complete case-management programme.
 
 This repository contains a real full-stack application, not a static prototype. The React interface uses a Fastify API, a durable SQLite database, private file storage, secure sessions, firm and matter-level access rules, versioned workflows, explainable deadline calculations, and append-only evidential records.
 
@@ -11,6 +11,9 @@ This repository contains a real full-stack application, not a static prototype. 
 - role and matter membership permissions;
 - litigation dashboard with urgent work and deadline counts;
 - matter creation with Proclaim-compatible migration identifiers;
+- a claimant Housing Conditions enquiry queue with search, status and assignee filters;
+- governed conflict checks, legal assessment, acceptance, client onboarding and atomic conversion;
+- canonical contacts, households, properties, landlords and tenancies linked into Matter 360;
 - parties, tasks, assignments, completion history, and matter chronology;
 - private document upload, SHA-256 hashing, immutable version rows, and authorised downloads;
 - append-only audit records protected by database triggers;
@@ -18,6 +21,23 @@ This repository contains a real full-stack application, not a static prototype. 
 - responsive desktop, tablet, and mobile interface;
 - seeded two-firm evaluation dataset;
 - automated domain, security, API, client, and production-build checks.
+
+### Claimant intake and onboarding
+
+- dense enquiry queue and responsive five-section workspace: Enquiry, Conflicts, Assessment, Onboarding and Decision;
+- explicit human conflict decisions—search results never clear a conflict automatically;
+- solicitor-reviewed jurisdiction, relationship, notice, unresolved conditions, access, evidence, limitation, legal issues, merits and proportionality controls;
+- partner review gates for configured urgent escalations;
+- acceptance, decline, referral, duplicate and unable-to-contact outcomes with immutable status history and reasons;
+- identity, client-care, authority, privacy, funding and signature statuses;
+- vulnerability, accessibility, interpreter and safe-contact instructions, plus a multi-person household register;
+- property, landlord, occupancy, tenancy and integer-minor-unit rent records;
+- server-projected readiness blockers so the browser cannot declare a file ready itself;
+- optimistic versions on every governed write;
+- one idempotent, transactional conversion that either creates the complete matter and workflow or creates nothing;
+- converted Matter 360 panels for Client & Household and Property & Tenancy, with a legacy-matter fallback.
+
+AI drafting, document analysis, call transcription and WhatsApp calling are part of the wider product programme; they are not represented as completed capabilities in this build. Human legal decisions and controlled source facts remain authoritative.
 
 ### Housing Conditions workflow foundation
 
@@ -58,13 +78,19 @@ All seeded users use the password `SwiftClaim!2026`.
 
 | User | Email | Access to demonstrate |
 |---|---|---|
-| Ava Morgan | `ava@northstar.test` | Solicitor; assigned Northstar matter only |
+| Ava Morgan | `ava@northstar.test` | Solicitor; Leah intake pilot and assigned Northstar matter |
 | Marcus Reed | `partner@northstar.test` | Partner; all Northstar matters and matter creation |
 | Ben Foster | `ben@northstar.test` | Paralegal; assigned matters only |
 | Priya Shah | `finance@northstar.test` | Firm-wide read-only access |
 | Lewis Grant | `lewis@southbank.test` | Separate Southbank firm tenant |
 
-Use Ava for the main Housing Conditions workflow and open `Clarke v Meridian Housing`. Use Marcus to create a matter or test partner-only workflow overrides. Use Lewis to verify that Northstar matter UUIDs, summaries, deadlines, and documents remain invisible across firms. All names, addresses, organisations, and claim details in the seed are synthetic and evaluation-only.
+Use Ava for both supported evaluation journeys:
+
+1. Open **Enquiries**, then open `Leah Benton` at 42 Hazel Walk. Her conflict and legal review are complete and the enquiry is accepted. Every onboarding control is complete except **Funding status**, which is intentionally `Pending`.
+2. Change Funding status to `Complete`, save onboarding, open Decision and convert. SwiftClaim creates the complete Housing Conditions matter atomically at **Evidence and notice**, then opens it in Matter 360 with the client, household, property, landlord and tenancy profile intact.
+3. Open `Clarke v Meridian Housing` to inspect the longer-running synthetic matter at Pre-Action Protocol, including Maya Clarke's complete converted intake profile and governed protocol deadline.
+
+Use Marcus to test partner-only workflow overrides. Use Lewis to see Southbank's separate Amara Jones enquiry and verify that Northstar enquiry and matter UUIDs remain invisible across firms. All names, addresses, organisations and claim details in the seed are synthetic and evaluation-only.
 
 ## Commands
 
@@ -93,8 +119,10 @@ SwiftClaim is a modular monolith. That keeps workflow transitions, deadline crea
 flowchart TD
   Browser[React client] --> API[Fastify application]
   API --> Policy[Session and capability policy]
+  Policy --> Intake["Intake and onboarding service"]
   Policy --> Matter["Matter service and store"]
   Policy --> Workflow["Workflow service and store"]
+  Intake --> DB[(SQLite adapter)]
   Matter --> DB[(SQLite adapter)]
   Workflow --> DB
   Matter --> Files[Private file storage]
@@ -104,6 +132,7 @@ The boundaries are deliberately portable:
 
 - `src/shared/contracts.ts` owns validated request contracts;
 - `src/server/policy.ts` owns role decisions;
+- `src/server/intake/` owns enquiries, conflicts, readiness, onboarding and conversion;
 - `src/server/store.ts` owns tenant-scoped matter operations;
 - `src/server/workflow/` owns workflow definitions, working-day calculations, transitions, deadlines, and Matter 360 orchestration;
 - `src/server/storage.ts` owns immutable bytes and hashes;
@@ -117,7 +146,7 @@ SQLite and local storage are evaluation adapters. The same contracts can move to
 
 The server never accepts a firm identifier from the browser. It resolves the firm and user from a random session token stored in an HTTP-only, same-site cookie. Only the SHA-256 token hash is stored in the database.
 
-Administrative and partner roles can read and write every matter in their firm. Solicitors and paralegals need ownership or explicit membership. Finance and read-only roles can read firm matters but cannot mutate them. Inaccessible matters and child resources return `404`, including resources in another firm, to avoid existence disclosure.
+Administrative and partner roles can read and write every matter and enquiry in their firm. Solicitors and paralegals need assignment, ownership or explicit membership. Conflict decisions, intake outcomes, overrides and conversion have distinct capability checks. Finance and read-only roles can read firm matters but cannot access claimant intake or mutate records. Inaccessible matters, enquiries and child resources return the same generic `404`, including resources in another firm, to avoid existence disclosure.
 
 Every tenant-owned table carries `firm_id`. Composite foreign keys prevent a child record from crossing a firm boundary. Audit and document-version rows have database triggers that reject updates and deletion. Uploaded names never become storage paths; files receive random storage keys and an SHA-256 digest.
 
@@ -149,10 +178,21 @@ The approved Step 1 design and implementation plan are in `docs/superpowers/`.
 | `POST` | `/api/auth/logout` | Revoke the session |
 | `GET` | `/api/me` | Current user, firm, and permissions |
 | `GET` | `/api/dashboard` | Accessible work summary |
+| `GET` | `/api/enquiries` | Assigned or firm-wide claimant enquiry queue |
+| `POST` | `/api/enquiries` | Create a Housing Conditions enquiry |
+| `GET` | `/api/enquiries/:id` | Governed intake workspace and readiness |
+| `PATCH` | `/api/enquiries/:id` | Update captured enquiry facts with a version |
+| `POST` | `/api/enquiries/:id/conflict-checks` | Search tenant-local conflict candidates |
+| `POST` | `/api/enquiries/:id/conflict-decisions` | Record the authorised human conflict decision |
+| `PUT` | `/api/enquiries/:id/assessment` | Save the legal assessment and review decision |
+| `PUT` | `/api/enquiries/:id/onboarding` | Save opening controls, household and tenancy |
+| `POST` | `/api/enquiries/:id/decisions` | Record acceptance or another intake outcome |
+| `POST` | `/api/enquiries/:id/convert` | Atomically and idempotently open the governed matter |
 | `GET` | `/api/matters` | Accessible matters and search |
 | `POST` | `/api/matters` | Create a matter as partner/admin |
 | `GET` | `/api/matters/:id` | Full authorised matter aggregate |
 | `GET` | `/api/matters/:id/summary` | Matter 360 workflow, deadlines, alerts, and next actions |
+| `GET` | `/api/matters/:id/intake-profile` | Converted client, household, property and tenancy profile |
 | `POST` | `/api/matters/:id/workflow/transitions` | Progress a workflow with readiness and version controls |
 | `POST` | `/api/matters/:id/workflow/triggers` | Confirm a legal event and calculate its governed deadline |
 | `POST` | `/api/matters/:id/parties` | Add a matter party |
@@ -186,8 +226,8 @@ Before a live pilot, replace the evaluation adapters with managed PostgreSQL and
 
 ## Next build
 
-The next case-management slice is Intake and Onboarding for claimant Housing Conditions work: enquiry capture, conflict checks, eligibility and merits screening, limitation review, property and tenancy facts, landlord identification, vulnerabilities and reasonable adjustments, identity checks, client care, authority, funding, risk, acceptance or decline, and automatic creation of the governed matter workflow.
+The next case-management slice is **Defects, Notice and Evidence** for claimant Housing Conditions work: structured room-by-room defect schedules, hazards and severity, repair-report chronology, landlord notice evidence, access attempts, photographs and media, medical links, evidence provenance, disclosure gaps, Letter of Claim data and controlled document generation.
 
-That is followed by the remaining CMS programme: deeper evidence and defect schedules, correspondence and document production, expert instruction and inspection control, repairs and quantum, offers and settlement authority, proceedings, costs and billing, closure, reporting, integrations, and supervised AI assistance.
+That is followed by correspondence and communication capture, expert instruction and inspection control, repairs and quantum, offers and settlement authority, proceedings, costs and billing, closure, reporting, integrations, then supervised AI assistance across each governed source record. Calling and messaging integrations must preserve consent, identity, recording notices, retention, audit and human-review controls.
 
 SwiftBridge is deliberately deferred until the operational case-management model is sufficiently complete to receive Proclaim data without flattening or losing it. The current external identifiers, import-batch fields, file hashes, audit model, and integration outbox preserve the migration seam. When SwiftBridge begins, its first deliverable should be an anonymised discovery and dry-run import with source inventory, mappings, document manifest, reconciliation totals, and an exception queue before any live cutover.

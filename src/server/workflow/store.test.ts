@@ -55,6 +55,48 @@ describe('WorkflowStore', () => {
     ).toEqual({ count: 1 });
   });
 
+  it('bootstraps a converted intake at Evidence inside the caller transaction', () => {
+    database.exec('BEGIN IMMEDIATE');
+    let workflow;
+    try {
+      workflow = store.bootstrapFromIntakeInTransaction({
+        firmId: SEED_IDS.northstarFirm,
+        matterId: TEST_MATTER_ID,
+        actorUserId: TEST_ACTOR_ID,
+        occurredAt: FIXED_NOW.toISOString(),
+      });
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+
+    expect(workflow).toMatchObject({
+      currentStage: { key: 'evidence' },
+      version: 4,
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT from_stage_key AS fromStage, to_stage_key AS toStage
+           FROM matter_stage_history WHERE matter_id = ? ORDER BY rowid`,
+        )
+        .all(TEST_MATTER_ID),
+    ).toEqual([
+      { fromStage: null, toStage: 'enquiry' },
+      { fromStage: 'enquiry', toStage: 'assessment' },
+      { fromStage: 'assessment', toStage: 'onboarding' },
+      { fromStage: 'onboarding', toStage: 'evidence' },
+    ]);
+    expect(
+      database
+        .prepare(
+          'SELECT COUNT(*) AS count FROM matter_workflow_checklist WHERE matter_id = ?',
+        )
+        .get(TEST_MATTER_ID),
+    ).toEqual({ count: 10 });
+  });
+
   it('cannot read another firm workflow through a tenant-scoped lookup', () => {
     store.instantiateMatterWorkflow(
       SEED_IDS.southbankFirm,

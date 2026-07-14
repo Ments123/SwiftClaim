@@ -18,6 +18,11 @@ const userFixture = {
     canTransitionWorkflow: true,
     canOverrideWorkflow: false,
     canConfirmDeadline: true,
+    canAccessIntake: true,
+    canWriteIntake: true,
+    canDecideIntake: true,
+    canOverrideConflict: false,
+    canConvertIntake: true,
   },
 };
 
@@ -255,6 +260,29 @@ describe('SwiftClaim client', () => {
     expect(screen.getByText('Review landlord repair disclosure')).toBeVisible();
     expect(screen.getByText('1 overdue')).toBeVisible();
     expect(screen.getByText(matterFixture.reference)).toBeVisible();
+  });
+
+  it('routes claimant users into the enquiry queue from primary navigation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/me') return json({ user: userFixture });
+        if (url === '/api/dashboard') return json(dashboardFixture);
+        if (url === '/api/enquiries') return json({ enquiries: [] });
+        if (url === '/api/users') return json({ users: dashboardFixture.team });
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(<App />);
+    await screen.findByRole('heading', { name: /good afternoon, ava/i });
+    await userEvent.click(screen.getByRole('button', { name: 'Enquiries' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Housing Conditions enquiries' }),
+    ).toBeVisible();
+    expect(window.location.pathname).toBe('/intake');
   });
 
   it('opens an accessible matter workspace from the dashboard', async () => {

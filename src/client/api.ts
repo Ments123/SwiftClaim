@@ -10,6 +10,11 @@ export interface CurrentUser {
     canTransitionWorkflow: boolean;
     canOverrideWorkflow: boolean;
     canConfirmDeadline: boolean;
+    canAccessIntake: boolean;
+    canWriteIntake: boolean;
+    canDecideIntake: boolean;
+    canOverrideConflict: boolean;
+    canConvertIntake: boolean;
   };
 }
 
@@ -18,6 +23,220 @@ export interface TeamMember {
   name: string;
   email: string;
   role: string;
+}
+
+export type EnquiryStatus =
+  | 'new'
+  | 'assessment'
+  | 'accepted'
+  | 'declined'
+  | 'referred'
+  | 'duplicate'
+  | 'unable_to_contact'
+  | 'converted';
+
+export interface EnquiryDetail {
+  id: string;
+  reference: string;
+  status: EnquiryStatus;
+  version: number;
+  source: string;
+  referrerName: string;
+  summary: string;
+  defectSummary: string;
+  desiredOutcome: string;
+  firstComplainedOn: string | null;
+  currentlyOccupied: boolean;
+  urgency: 'routine' | 'priority' | 'urgent' | 'critical';
+  immediateSafetyConcerns: string;
+  communicationRequirements: string;
+  decisionReason: string;
+  createdAt: string;
+  updatedAt: string;
+  client: {
+    id: string;
+    displayName: string;
+    givenName: string;
+    familyName: string;
+    dateOfBirth: string | null;
+    email: string;
+    phone: string;
+    preferredChannel: 'email' | 'phone' | 'sms' | 'post';
+  };
+  property: {
+    id: string;
+    addressLine1: string;
+    addressLine2: string;
+    city: string;
+    county: string;
+    postcode: string;
+    country: string;
+    propertyType: string;
+  };
+  landlord: { id: string; name: string; kind: string } | null;
+  assignedTo: { id: string; name: string; role: string };
+}
+
+export type EnquiryListItem = EnquiryDetail;
+
+export interface IntakeBlocker {
+  key: string;
+  label: string;
+  severity: 'warning' | 'critical';
+}
+
+export interface IntakeReadiness {
+  assessment: { ready: boolean; blockers: IntakeBlocker[] };
+  onboarding: { ready: boolean; blockers: IntakeBlocker[] };
+  conversion: { ready: boolean; blockers: IntakeBlocker[] };
+}
+
+export interface ConflictCheck {
+  id: string;
+  enquiryId: string;
+  matchCount: number;
+  matches: Array<{
+    source: 'matter' | 'enquiry' | 'contact' | 'property' | 'organisation';
+    display: string;
+    matchedOn: string[];
+  }>;
+  runAt: string;
+  runBy: { id: string; name: string };
+}
+
+export interface ConflictDecision {
+  id: string;
+  checkId: string;
+  decision: 'clear' | 'blocked' | 'cleared_with_override';
+  reason: string;
+  decidedAt: string;
+  decidedBy: { id: string; name: string };
+}
+
+export interface IntakeAssessment {
+  id: string;
+  enquiryId: string;
+  version: number;
+  jurisdictionConfirmed: boolean;
+  claimantRelationship: 'tenant' | 'former_tenant' | 'leaseholder' | 'other';
+  noticeSummary: string;
+  conditionsUnresolved: boolean;
+  conditionStartDate: string | null;
+  accessSummary: string;
+  evidenceSummary: string;
+  limitationReview: string;
+  legalIssues: Array<'section_11' | 'fitness' | 'statutory' | 'contractual'>;
+  escalations: Array<
+    | 'personal_injury'
+    | 'possession'
+    | 'homelessness'
+    | 'safeguarding'
+    | 'urgent_injunction'
+    | 'critical_hazard'
+  >;
+  meritsRating: 'weak' | 'borderline' | 'reasonable' | 'strong';
+  proportionalityRating: 'poor' | 'borderline' | 'reasonable' | 'strong';
+  decision: 'draft' | 'proceed' | 'decline' | 'refer';
+  decisionReason: string;
+  reviewedBy: { id: string; name: string; role: string } | null;
+  reviewedAt: string | null;
+  updatedBy: { id: string; name: string };
+  updatedAt: string;
+}
+
+export interface IntakeTenancy {
+  id: string;
+  tenancyType: string;
+  startedOn: string | null;
+  endedOn: string | null;
+  rentMinor: number;
+  currency: string;
+  rentFrequency: string;
+  occupancyStartedOn: string | null;
+  occupancyEndedOn: string | null;
+}
+
+export interface IntakeHouseholdMember {
+  id: string;
+  displayName: string;
+  relationship: string;
+  currentlyOccupies: boolean;
+  claimParticipant: boolean;
+  vulnerabilitySummary: string;
+  accessibilityNeeds: string;
+}
+
+export interface IntakeOnboarding {
+  id: string;
+  enquiryId: string;
+  version: number;
+  identityStatus: 'not_started' | 'pending' | 'complete' | 'failed';
+  clientCareStatus: 'not_started' | 'pending' | 'complete';
+  authorityStatus: 'not_started' | 'pending' | 'complete';
+  privacyStatus: 'not_started' | 'pending' | 'complete';
+  fundingType: string;
+  fundingStatus: 'not_started' | 'pending' | 'complete';
+  signatureStatus: 'not_started' | 'sent' | 'complete';
+  vulnerabilitySummary: string;
+  accessibilityNeeds: string;
+  interpreterLanguage: string | null;
+  safeContactInstructions: string;
+  owner: { id: string; name: string; role: string } | null;
+  supervisor: { id: string; name: string; role: string } | null;
+  tenancy: IntakeTenancy | null;
+  householdMembers: IntakeHouseholdMember[];
+  updatedBy: { id: string; name: string };
+  updatedAt: string;
+}
+
+export interface IntakeConversion {
+  id: string;
+  idempotencyKey: string;
+  convertedAt: string;
+  replayed: boolean;
+  enquiry: EnquiryDetail;
+  matter: {
+    id: string;
+    reference: string;
+    title: string;
+    clientName: string;
+    stage: string;
+    owner: { id: string; name: string };
+  };
+  workflow: {
+    id: string;
+    currentStage: { key: string; name: string };
+    version: number;
+  };
+}
+
+export interface IntakeWorkspace {
+  enquiry: EnquiryDetail;
+  conflict: {
+    latestCheck: ConflictCheck | null;
+    latestDecision: ConflictDecision | null;
+  };
+  assessment: IntakeAssessment | null;
+  onboarding: IntakeOnboarding | null;
+  readiness: IntakeReadiness;
+  conversion: IntakeConversion | null;
+}
+
+export interface MatterIntakeProfile {
+  matterId: string;
+  enquiryId: string;
+  enquiryReference: string;
+  client: EnquiryDetail['client'] & {
+    safeContactInstructions: string;
+    accessibilityNeeds: string;
+    interpreterLanguage: string | null;
+  };
+  householdMembers: IntakeHouseholdMember[];
+  property: EnquiryDetail['property'];
+  landlord: NonNullable<EnquiryDetail['landlord']>;
+  tenancy: IntakeTenancy;
+  assessment: IntakeAssessment;
+  onboarding: IntakeOnboarding;
 }
 
 export interface MatterSummary {
