@@ -6,6 +6,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { rename } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -65,6 +66,30 @@ export async function storeUploadedFile(
       storageKey,
       sizeBytes,
       sha256: digest.digest('hex'),
+    };
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    rmSync(destination, { force: true });
+    throw error;
+  }
+}
+
+export async function storeGeneratedFile(
+  storagePath: string,
+  bytes: Uint8Array,
+): Promise<StoredFile> {
+  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new UploadTooLargeError();
+  mkdirSync(storagePath, { recursive: true, mode: 0o700 });
+  const storageKey = randomUUID();
+  const destination = filePath(storagePath, storageKey);
+  const temporary = join(storagePath, `.${storageKey}.generated`);
+  try {
+    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+    await rename(temporary, destination);
+    return {
+      storageKey,
+      sizeBytes: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
     };
   } catch (error) {
     rmSync(temporary, { force: true });

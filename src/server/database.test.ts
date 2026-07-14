@@ -92,6 +92,19 @@ describe('canonical database', () => {
         'defect_evidence_links',
         'notice_evidence_links',
         'access_evidence_links',
+        'protocol_cases',
+        'letters_of_claim',
+        'letter_of_claim_versions',
+        'protocol_service_events',
+        'landlord_responses',
+        'landlord_response_defects',
+        'expert_engagements',
+        'expert_conflict_checks',
+        'expert_instruction_versions',
+        'expert_milestone_events',
+        'expert_report_records',
+        'expert_questions',
+        'expert_question_answers',
       ]),
     );
     expect(database.prepare('PRAGMA foreign_keys').get()).toEqual({
@@ -128,6 +141,11 @@ describe('canonical database', () => {
       {
         version: 4,
         name: 'defects notice and evidence',
+        checksumLength: 64,
+      },
+      {
+        version: 5,
+        name: 'protocol and experts',
         checksumLength: 64,
       },
     ]);
@@ -513,7 +531,7 @@ describe('canonical database', () => {
           SEED_IDS.northstarMatter,
           SEED_IDS.northstarMatter,
         ),
-    ).toEqual({ workflows: 1, stages: 5, events: 5, deadlines: 1 });
+    ).toEqual({ workflows: 1, stages: 5, events: 4, deadlines: 0 });
   });
 
   it('seeds the claimant intake pilot and converted matter profile idempotently', () => {
@@ -651,15 +669,10 @@ describe('canonical database', () => {
       title: 'Clarke v Meridian Housing',
     });
     expect(summary.workflow.currentStageKey).toBe('protocol');
-    expect(summary.deadlines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          title: 'Landlord response to Letter of Claim',
-          dueDate: calculation.dueDate,
-        }),
-      ]),
-    );
-    expect(summary.workflow.blockers).toEqual([]);
+    expect(summary.deadlines).toEqual([]);
+    expect(summary.workflow.blockers).toEqual([
+      expect.objectContaining({ key: 'letter_of_claim_sent' }),
+    ]);
   });
 
   it('keeps the evaluation matter invisible across firm boundaries', () => {

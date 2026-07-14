@@ -17,10 +17,53 @@ describe('runMigrations', () => {
       { version: 2, name: 'workflow foundation' },
       { version: 3, name: 'intake and onboarding' },
       { version: 4, name: 'defects notice and evidence' },
+      { version: 5, name: 'protocol and experts' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates the governed protocol and expert tables with immutable guards', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-14T14:00:00.000Z');
+
+    const tableNames = new Set(
+      (database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all() as Array<{ name: string }>).map(({ name }) => name),
+    );
+    expect([...tableNames]).toEqual(expect.arrayContaining([
+      'protocol_cases',
+      'letters_of_claim',
+      'letter_of_claim_versions',
+      'protocol_service_events',
+      'landlord_responses',
+      'landlord_response_defects',
+      'expert_engagements',
+      'expert_conflict_checks',
+      'expert_instruction_versions',
+      'expert_milestone_events',
+      'expert_report_records',
+      'expert_questions',
+      'expert_question_answers',
+    ]));
+
+    const triggerNames = (database
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'trigger'
+           AND (name LIKE 'protocol_%' OR name LIKE 'expert_%'
+             OR name LIKE 'letter_%' OR name LIKE 'landlord_%')`,
+      )
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'letter_of_claim_versions_no_update',
+      'protocol_service_events_no_delete',
+      'landlord_responses_no_update',
+      'expert_report_records_no_delete',
+      'expert_question_answers_no_update',
+    ]));
   });
 
   it('applies migrations once in version order and records checksums', () => {

@@ -106,6 +106,8 @@ export const confirmWorkflowTriggerSchema = z.object({
     'letter_of_claim.received',
     'landlord_response.received',
     'expert.inspection.completed',
+    'expert.report.received',
+    'expert.report.served_cpr35',
   ]),
   occurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   idempotencyKey: z.string().trim().min(8).max(200),
@@ -475,6 +477,459 @@ export const createEvidenceItemSchema = z
     }
   });
 
+const protocolDateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const protocolNullableDateSchema = protocolDateOnlySchema.nullable();
+const protocolNullableUuidSchema = z.string().uuid().nullable();
+const protocolIdempotencyKeySchema = z.string().trim().min(8).max(200);
+const protocolCorrectionReasonSchema = z.string().trim().max(2_000).default('');
+const protocolCurrencySchema = z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/);
+
+const accessWindowSchema = z
+  .object({
+    date: protocolDateOnlySchema,
+    from: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    to: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    notes: z.string().trim().max(500).default(''),
+  })
+  .refine((value) => value.from < value.to, {
+    message: 'The access end time must be after the start time.',
+    path: ['to'],
+  });
+
+export const saveLetterOfClaimSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  claimantAddress: z.string().trim().min(5).max(500),
+  landlordRecipient: z.string().trim().min(2).max(240),
+  landlordAddress: z.string().trim().min(5).max(500),
+  effectNarrative: z.string().trim().min(10).max(8_000),
+  personalInjuryStatus: z.enum([
+    'none',
+    'minor_gp_evidence',
+    'other_protocol_required',
+    'under_review',
+  ]),
+  personalInjurySummary: z.string().trim().max(4_000).default(''),
+  specialDamagesStatus: z.enum(['none', 'claimed', 'under_review']),
+  specialDamagesSummary: z.string().trim().max(4_000).default(''),
+  accessWindows: z.array(accessWindowSchema).max(20),
+  expertProposalSummary: z.string().trim().max(4_000).default(''),
+  disclosureRequests: z
+    .array(z.string().trim().min(3).max(500))
+    .min(1)
+    .max(30)
+    .refine((values) => new Set(values).size === values.length, {
+      message: 'Disclosure requests must be unique.',
+    }),
+  additionalContent: z.string().trim().max(8_000).default(''),
+  state: z.enum(['draft', 'ready_for_review']),
+});
+
+export const approveLetterOfClaimSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: protocolIdempotencyKeySchema,
+});
+
+export const recordProtocolServiceEventSchema = z
+  .object({
+    idempotencyKey: protocolIdempotencyKeySchema,
+    letterVersionId: z.string().uuid(),
+    eventType: z.enum([
+      'dispatched',
+      'actual_receipt',
+      'deemed_receipt',
+      'receipt_disputed',
+      'delivery_failed',
+      'corrected',
+    ]),
+    method: z.enum(['email', 'post', 'hand', 'portal', 'courier', 'other']),
+    occurredAt: z.string().datetime({ offset: true }),
+    legalTriggerOn: protocolNullableDateSchema,
+    recipient: z.string().trim().min(2).max(240),
+    destination: z.string().trim().min(2).max(500),
+    sourceDetail: z.string().trim().min(10).max(2_000),
+    supportingDocumentVersionId: protocolNullableUuidSchema,
+    supersedesEventId: protocolNullableUuidSchema,
+    correctionReason: protocolCorrectionReasonSchema,
+  })
+  .superRefine((input, context) => {
+    if (
+      ['actual_receipt', 'deemed_receipt'].includes(input.eventType) &&
+      !input.legalTriggerOn
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A confirmed legal trigger date is required for receipt.',
+        path: ['legalTriggerOn'],
+      });
+    }
+    if (input.supersedesEventId && input.correctionReason.length < 10) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A correction reason of at least 10 characters is required.',
+        path: ['correctionReason'],
+      });
+    }
+  });
+
+const responseDefectPositionSchema = z.object({
+  defectId: z.string().uuid(),
+  position: z.enum([
+    'admitted',
+    'partly_admitted',
+    'denied',
+    'not_addressed',
+    'unclear',
+  ]),
+  reason: z.string().trim().max(2_000).default(''),
+});
+
+export const recordLandlordResponseSchema = z
+  .object({
+    idempotencyKey: protocolIdempotencyKeySchema,
+    responseType: z.enum([
+      'initial',
+      'expert_proposal',
+      'substantive',
+      'supplemental',
+      'no_response_recorded',
+    ]),
+    receivedOn: protocolNullableDateSchema,
+    respondingParty: z.string().trim().min(2).max(240),
+    contactName: z.string().trim().max(240).default(''),
+    generalLiabilityPosition: z.enum([
+      'admitted',
+      'partly_admitted',
+      'denied',
+      'reserved',
+      'not_addressed',
+      'no_response',
+    ]),
+    liabilityReasons: z.string().trim().max(6_000).default(''),
+    noticePosition: z.string().trim().max(4_000).default(''),
+    accessPosition: z.string().trim().max(4_000).default(''),
+    disclosureStatus: z.enum([
+      'complete',
+      'partial',
+      'withheld',
+      'none',
+      'not_applicable',
+    ]),
+    disclosureSummary: z.string().trim().max(4_000).default(''),
+    expertProposalPosition: z.enum([
+      'agreed',
+      'agreed_separate_instructions',
+      'joint_inspection',
+      'objected',
+      'not_addressed',
+      'not_applicable',
+    ]),
+    expertProposalSummary: z.string().trim().max(4_000).default(''),
+    worksSchedule: z.string().trim().max(6_000).default(''),
+    worksStartOn: protocolNullableDateSchema,
+    worksCompleteOn: protocolNullableDateSchema,
+    compensationOfferMinor: z.number().int().nonnegative().nullable(),
+    costsOfferMinor: z.number().int().nonnegative().nullable(),
+    currency: protocolCurrencySchema,
+    sourceDocumentVersionId: protocolNullableUuidSchema,
+    supersedesResponseId: protocolNullableUuidSchema,
+    correctionReason: protocolCorrectionReasonSchema,
+    defectPositions: z.array(responseDefectPositionSchema).max(200),
+  })
+  .superRefine((input, context) => {
+    if (input.responseType === 'no_response_recorded') {
+      if (input.receivedOn !== null || input.generalLiabilityPosition !== 'no_response') {
+        context.addIssue({
+          code: 'custom',
+          message: 'A no-response record cannot contain a received date or liability response.',
+          path: ['responseType'],
+        });
+      }
+    } else {
+      if (!input.receivedOn) {
+        context.addIssue({
+          code: 'custom',
+          message: 'The landlord response received date is required.',
+          path: ['receivedOn'],
+        });
+      }
+      if (input.defectPositions.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Record the response position for at least one defect.',
+          path: ['defectPositions'],
+        });
+      }
+    }
+    if (
+      new Set(input.defectPositions.map(({ defectId }) => defectId)).size !==
+      input.defectPositions.length
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A defect can appear only once in a response.',
+        path: ['defectPositions'],
+      });
+    }
+    if (input.supersedesResponseId && input.correctionReason.length < 10) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A correction reason of at least 10 characters is required.',
+        path: ['correctionReason'],
+      });
+    }
+  });
+
+export const varyProtocolDeadlineSchema = z.object({
+  deadlineId: z.string().uuid(),
+  agreedOn: protocolDateOnlySchema,
+  dueOn: protocolDateOnlySchema,
+  reason: z.string().trim().min(10).max(2_000),
+  idempotencyKey: protocolIdempotencyKeySchema,
+});
+
+export const expertRouteSchema = z.enum([
+  'undecided',
+  'proposed_single_joint',
+  'single_joint_joint_instructions',
+  'single_joint_separate_instructions',
+  'separate_experts',
+  'joint_inspection',
+  'urgent_own_expert',
+  'not_required',
+]);
+
+export const selectExpertRouteSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    route: expertRouteSchema,
+    reason: z.string().trim().max(2_000).default(''),
+    urgentReason: z.string().trim().max(2_000).default(''),
+  })
+  .superRefine((input, context) => {
+    if (
+      ['not_required', 'urgent_own_expert'].includes(input.route) &&
+      input.reason.length < 10
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'This expert route requires a reason of at least 10 characters.',
+        path: ['reason'],
+      });
+    }
+    if (input.route === 'urgent_own_expert' && input.urgentReason.length < 10) {
+      context.addIssue({
+        code: 'custom',
+        message: 'An urgent instruction reason is required.',
+        path: ['urgentReason'],
+      });
+    }
+  });
+
+const expertEngagementFields = {
+  route: z.enum([
+    'proposed_single_joint',
+    'single_joint_joint_instructions',
+    'single_joint_separate_instructions',
+    'separate_experts',
+    'joint_inspection',
+    'urgent_own_expert',
+  ]),
+  expertRole: z.enum([
+    'building_surveyor',
+    'environmental_health',
+    'other_housing_conditions',
+  ]),
+  expertName: z.string().trim().min(2).max(240),
+  organisation: z.string().trim().max(240).default(''),
+  email: z.union([z.literal(''), z.string().trim().email().max(254)]).default(''),
+  phone: z.string().trim().max(80).default(''),
+  expertise: z.string().trim().min(5).max(2_000),
+  qualifications: z.string().trim().max(2_000).default(''),
+  registrationBody: z.string().trim().max(120).default(''),
+  registrationReference: z.string().trim().max(200).default(''),
+  verificationStatus: z.enum(['unverified', 'user_verified']),
+  verificationMethod: z.string().trim().max(1_000).default(''),
+  verifiedOn: protocolNullableDateSchema,
+  proposedBy: z.enum(['claimant', 'landlord', 'jointly', 'court', 'other']),
+  singleJoint: z.boolean(),
+  termsStatus: z.enum([
+    'not_requested',
+    'requested',
+    'received',
+    'accepted',
+    'rejected',
+  ]),
+  feeBasis: z.string().trim().max(1_000).default(''),
+  feeMinor: z.number().int().nonnegative().nullable(),
+  currency: protocolCurrencySchema,
+  payerSplit: z
+    .object({
+      claimantPercent: z.number().int().min(0).max(100),
+      landlordPercent: z.number().int().min(0).max(100),
+    })
+    .refine(
+      ({ claimantPercent, landlordPercent }) =>
+        claimantPercent + landlordPercent === 100,
+      { message: 'The payer split must total 100 percent.' },
+    ),
+  availabilitySummary: z.string().trim().max(2_000).default(''),
+  targetReportOn: protocolNullableDateSchema,
+};
+
+export const createExpertEngagementSchema = z.object(expertEngagementFields);
+export const updateExpertEngagementSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    route: expertEngagementFields.route.optional(),
+    expertRole: expertEngagementFields.expertRole.optional(),
+    expertName: expertEngagementFields.expertName.optional(),
+    organisation: expertEngagementFields.organisation.optional(),
+    email: expertEngagementFields.email.optional(),
+    phone: expertEngagementFields.phone.optional(),
+    expertise: expertEngagementFields.expertise.optional(),
+    qualifications: expertEngagementFields.qualifications.optional(),
+    registrationBody: expertEngagementFields.registrationBody.optional(),
+    registrationReference: expertEngagementFields.registrationReference.optional(),
+    verificationStatus: expertEngagementFields.verificationStatus.optional(),
+    verificationMethod: expertEngagementFields.verificationMethod.optional(),
+    verifiedOn: expertEngagementFields.verifiedOn.optional(),
+    proposedBy: expertEngagementFields.proposedBy.optional(),
+    singleJoint: expertEngagementFields.singleJoint.optional(),
+    termsStatus: expertEngagementFields.termsStatus.optional(),
+    feeBasis: expertEngagementFields.feeBasis.optional(),
+    feeMinor: expertEngagementFields.feeMinor.optional(),
+    currency: expertEngagementFields.currency.optional(),
+    payerSplit: expertEngagementFields.payerSplit.optional(),
+    availabilitySummary: expertEngagementFields.availabilitySummary.optional(),
+    targetReportOn: expertEngagementFields.targetReportOn.optional(),
+  })
+  .refine((input) => Object.keys(input).some((key) => key !== 'expectedVersion'), {
+    message: 'At least one expert field must be supplied.',
+  });
+
+export const recordExpertConflictCheckSchema = z
+  .object({
+    idempotencyKey: protocolIdempotencyKeySchema,
+    partiesChecked: z.array(z.string().trim().min(2).max(240)).min(2).max(100),
+    method: z.string().trim().min(5).max(1_000),
+    searchDetail: z.string().trim().min(5).max(4_000),
+    outcome: z.enum(['clear', 'potential', 'blocked', 'unable_to_complete']),
+    decision: z.enum([
+      'clear_to_proceed',
+      'proceed_with_override',
+      'do_not_proceed',
+    ]),
+    reason: z.string().trim().min(10).max(2_000),
+  })
+  .superRefine((input, context) => {
+    if (input.outcome === 'potential' && input.decision !== 'proceed_with_override') {
+      context.addIssue({
+        code: 'custom',
+        message: 'A potential conflict requires an explicit override or a stop decision.',
+        path: ['decision'],
+      });
+    }
+    if (
+      ['blocked', 'unable_to_complete'].includes(input.outcome) &&
+      input.decision !== 'do_not_proceed'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'This conflict result cannot proceed.',
+        path: ['decision'],
+      });
+    }
+  });
+
+export const approveExpertInstructionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: protocolIdempotencyKeySchema,
+  issues: z.array(z.string().trim().min(5).max(2_000)).min(1).max(50),
+  questions: z.array(z.string().trim().min(5).max(2_000)).min(1).max(50),
+  accessDetail: z.string().trim().min(5).max(2_000),
+  urgentWorksRequested: z.boolean(),
+  scheduleOfWorksRequested: z.boolean(),
+  costEstimateRequested: z.boolean(),
+  reportDueOn: protocolNullableDateSchema,
+});
+
+export const recordExpertMilestoneSchema = z
+  .object({
+    idempotencyKey: protocolIdempotencyKeySchema,
+    instructionVersionId: protocolNullableUuidSchema,
+    eventType: z.enum([
+      'expert_proposed', 'expert_agreed', 'expert_objected', 'expert_withdrawn',
+      'terms_offered', 'terms_accepted', 'terms_rejected',
+      'instruction_dispatched', 'instruction_acknowledged',
+      'inspection_proposed', 'inspection_booked', 'inspection_rescheduled',
+      'inspection_completed', 'inspection_failed', 'inspection_cancelled',
+      'access_provided', 'access_refused', 'access_unavailable',
+      'report_received', 'report_reviewed', 'report_superseded', 'report_shared',
+      'joint_schedule_received', 'urgent_issue_escalated',
+      'engagement_completed', 'engagement_cancelled',
+    ]),
+    occurredAt: z.string().datetime({ offset: true }),
+    legalTriggerOn: protocolNullableDateSchema,
+    detail: z.string().trim().min(5).max(4_000),
+    supportingDocumentVersionId: protocolNullableUuidSchema,
+    supersedesEventId: protocolNullableUuidSchema,
+    correctionReason: protocolCorrectionReasonSchema,
+  })
+  .superRefine((input, context) => {
+    if (input.supersedesEventId && input.correctionReason.length < 10) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A correction reason of at least 10 characters is required.',
+        path: ['correctionReason'],
+      });
+    }
+  });
+
+export const recordExpertReportSchema = z.object({
+  idempotencyKey: protocolIdempotencyKeySchema,
+  reportType: z.enum([
+    'single_joint_report',
+    'party_report',
+    'agreed_schedule',
+    'supplemental_report',
+    'other',
+  ]),
+  reportOn: protocolDateOnlySchema,
+  receivedOn: protocolDateOnlySchema,
+  coverageSummary: z.string().trim().min(10).max(6_000),
+  urgentWorksIdentified: z.boolean(),
+  documentVersionId: z.string().uuid(),
+  supersedesReportId: protocolNullableUuidSchema,
+});
+
+export const recordExpertQuestionSchema = z
+  .object({
+    idempotencyKey: protocolIdempotencyKeySchema,
+    reportId: z.string().uuid(),
+    question: z.string().trim().min(10).max(4_000),
+    clarificationPurpose: z.string().trim().min(10).max(2_000),
+    dispatchedOn: protocolNullableDateSchema,
+    responseDueOn: protocolNullableDateSchema,
+    legalBasis: z.enum(['none', 'agreed', 'solicitor_set', 'cpr35_6']),
+    reportServedOn: protocolNullableDateSchema,
+  })
+  .superRefine((input, context) => {
+    if (input.legalBasis === 'cpr35_6' && !input.reportServedOn) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Confirm the report service date before applying CPR 35.6.',
+        path: ['reportServedOn'],
+      });
+    }
+  });
+
+export const recordExpertQuestionAnswerSchema = z.object({
+  idempotencyKey: protocolIdempotencyKeySchema,
+  receivedOn: protocolDateOnlySchema,
+  summary: z.string().trim().min(10).max(4_000),
+  documentVersionId: z.string().uuid(),
+});
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -501,6 +956,20 @@ export type UpdateDefectInput = z.infer<typeof updateDefectSchema>;
 export type CreateNoticeInput = z.infer<typeof createNoticeSchema>;
 export type CreateAccessEventInput = z.infer<typeof createAccessEventSchema>;
 export type CreateEvidenceItemInput = z.infer<typeof createEvidenceItemSchema>;
+export type SaveLetterOfClaimInput = z.infer<typeof saveLetterOfClaimSchema>;
+export type ApproveLetterOfClaimInput = z.infer<typeof approveLetterOfClaimSchema>;
+export type RecordProtocolServiceEventInput = z.infer<typeof recordProtocolServiceEventSchema>;
+export type RecordLandlordResponseInput = z.infer<typeof recordLandlordResponseSchema>;
+export type VaryProtocolDeadlineInput = z.infer<typeof varyProtocolDeadlineSchema>;
+export type SelectExpertRouteInput = z.infer<typeof selectExpertRouteSchema>;
+export type CreateExpertEngagementInput = z.infer<typeof createExpertEngagementSchema>;
+export type UpdateExpertEngagementInput = z.infer<typeof updateExpertEngagementSchema>;
+export type RecordExpertConflictCheckInput = z.infer<typeof recordExpertConflictCheckSchema>;
+export type ApproveExpertInstructionInput = z.infer<typeof approveExpertInstructionSchema>;
+export type RecordExpertMilestoneInput = z.infer<typeof recordExpertMilestoneSchema>;
+export type RecordExpertReportInput = z.infer<typeof recordExpertReportSchema>;
+export type RecordExpertQuestionInput = z.infer<typeof recordExpertQuestionSchema>;
+export type RecordExpertQuestionAnswerInput = z.infer<typeof recordExpertQuestionAnswerSchema>;
 
 export interface ApiErrorBody {
   error: {

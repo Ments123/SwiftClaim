@@ -5,7 +5,11 @@ import { createDatabase, seedDatabase, SEED_IDS } from '../database.js';
 import type { EvidenceReadinessProvider } from '../evidence/service.js';
 import type { SessionUser } from '../policy.js';
 import { MatterStore } from '../store.js';
-import { WorkflowError, WorkflowService } from './service.js';
+import {
+  WorkflowError,
+  WorkflowService,
+  type ProtocolReadinessProvider,
+} from './service.js';
 import { WorkflowStore } from './store.js';
 
 const FIXED_NOW = new Date('2026-07-13T12:00:00.000Z');
@@ -39,6 +43,8 @@ describe('WorkflowService', () => {
   let workflowStore: WorkflowStore;
   let service: WorkflowService;
   let eligibleEvidenceControls: Set<string>;
+  let protocolEligible: boolean;
+  let protocolProgressionBlocked: boolean;
 
   beforeEach(() => {
     database = createDatabase(':memory:');
@@ -75,6 +81,8 @@ describe('WorkflowService', () => {
       );
     workflowStore = new WorkflowStore(database, () => FIXED_NOW);
     eligibleEvidenceControls = new Set();
+    protocolEligible = false;
+    protocolProgressionBlocked = true;
     const evidenceReadiness: EvidenceReadinessProvider = {
       getEvidenceReadiness: () => ({
         controls: [
@@ -96,11 +104,24 @@ describe('WorkflowService', () => {
         ],
       }),
     };
+    const protocolReadiness: ProtocolReadinessProvider = {
+      getProtocolReadiness: (_firmId, _matterId, stageKey) => ({
+        controls: [{
+          key: stageKey === 'protocol' ? 'letter_of_claim_sent' : 'expert_instruction_confirmed',
+          eligible: protocolEligible,
+          explanation: 'The governed protocol fact is not supported.',
+        }],
+        progressionBlockers: protocolProgressionBlocked
+          ? [{ key: 'objective_protocol_gap', label: 'An objective protocol gap remains.', severity: 'critical' }]
+          : [],
+      }),
+    };
     service = new WorkflowService(
       new MatterStore(database, () => FIXED_NOW),
       workflowStore,
       () => FIXED_NOW,
       evidenceReadiness,
+      protocolReadiness,
     );
     workflowStore.instantiateMatterWorkflow(
       SEED_IDS.northstarFirm,
@@ -231,6 +252,41 @@ describe('WorkflowService', () => {
         expect.objectContaining({ key: 'photographs_recorded' }),
       ]),
     });
+  });
+
+  it('filters unsupported protocol confirmations and keeps objective blockers live', () => {
+    advanceToEvidence();
+    eligibleEvidenceControls = new Set([
+      'defect_schedule_recorded',
+      'notice_evidence_recorded',
+      'photographs_recorded',
+    ]);
+    service.transitionStage(ava, TEST_MATTER_ID, {
+      toStageKey: 'protocol',
+      expectedVersion: 4,
+      completedChecklistKeys: [...eligibleEvidenceControls],
+      reason: 'The evidence investigation is complete for protocol review.',
+    }, AUDIT_CONTEXT);
+
+    const command = {
+      toStageKey: 'expert',
+      expectedVersion: 5,
+      completedChecklistKeys: ['letter_of_claim_sent'],
+      reason: 'The protocol response position is ready for expert evidence.',
+    };
+    expect(() => service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT))
+      .toThrowError(expect.objectContaining({
+        code: 'READINESS_BLOCKED',
+        details: { blockers: expect.arrayContaining([
+          expect.objectContaining({ key: 'letter_of_claim_sent' }),
+          expect.objectContaining({ key: 'objective_protocol_gap' }),
+        ]) },
+      }));
+
+    protocolEligible = true;
+    protocolProgressionBlocked = false;
+    expect(service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT)
+      .workflow.currentStageKey).toBe('expert');
   });
 
   it('returns stages, readiness blockers and explainable critical deadlines', () => {

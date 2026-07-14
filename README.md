@@ -1,6 +1,6 @@
 # SwiftClaim Litigation
 
-SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine, governed claimant intake and onboarding, atomic matter opening, a structured Housing Conditions evidence investigation, the first operational workflow, and a Matter 360 workspace. It is not yet the complete case-management programme.
+SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine, governed claimant intake and onboarding, atomic matter opening, a structured Housing Conditions evidence investigation, an operational Pre-Action Protocol and expert-evidence workspace, the first controlled workflow, and Matter 360. It is not yet the complete case-management programme.
 
 This repository contains a real full-stack application, not a static prototype. The React interface uses a Fastify API, a durable SQLite database, private file storage, secure sessions, firm and matter-level access rules, versioned workflows, explainable deadline calculations, and append-only evidential records.
 
@@ -19,6 +19,9 @@ This repository contains a real full-stack application, not a static prototype. 
 - structured defects with optimistic versions and append-only status history;
 - immutable landlord notice, access and evidence records linked to exact document versions;
 - explainable evidence readiness and simultaneous investigation risk flags;
+- source-linked Letter of Claim preparation with immutable generated DOCX versions;
+- controlled dispatch, receipt, landlord-response and expert-evidence records;
+- expert route, identity, conflict, terms, instruction, inspection, report and clarification controls;
 - append-only audit records protected by database triggers;
 - ordered, transactional database migrations;
 - responsive desktop, tablet, and mobile interface;
@@ -69,6 +72,25 @@ AI drafting, document analysis, call transcription and WhatsApp calling are part
 
 SwiftClaim records source facts and review controls. It does not determine liability, breach, causation, limitation, hazard classification or quantum.
 
+### Pre-Action Protocol and experts
+
+- active **Protocol & experts** Matter 360 caseboard with separate Letter of Claim, Landlord response and Experts views;
+- deterministic Letter assembly from canonical claimant, property, landlord, tenancy, defect, notice, access and evidence sources;
+- visible separation between confirmed facts, solicitor-supplied narrative, missing information and official deadline calculations;
+- source manifests and freshness comparison so an approved version never silently changes when the matter record changes;
+- authorised approval creates a private immutable DOCX, exact document version, SHA-256 digest and renderer metadata;
+- a generated or approved document is never treated as proof of dispatch or receipt;
+- append-only dispatch, actual receipt, deemed receipt, failed delivery, disputed receipt and correction events;
+- landlord responses recorded against each defect, including explicit not-addressed positions, disclosure state, works, expert proposal and integer-minor-unit offers;
+- controlled expert-route selection, identity and supplied qualifications, verification status, terms, fixed-fee and payer-split records;
+- privileged human conflict decisions, immutable generated instructions and append-only inspection/report milestones;
+- report records linked to an exact preserved document version, plus governed clarification questions and document-linked answers;
+- objective protocol and expert readiness enforced by the server during workflow transitions, with partner/admin override requiring a retained reason;
+- independent permissions for preparation, approval, conflict override and report review;
+- dense responsive layout that keeps legal risks, the next legal date, authority and provenance visible.
+
+SwiftClaim does not decide liability, whether expert evidence is legally required, professional competence, report adequacy, causation, limitation or quantum. It does not independently verify a professional registration. Email, post, WhatsApp, telephony and AI providers are not connected in this slice; external acts must be recorded only after an authorised user verifies them.
+
 The initial deadline rules are grounded in the official [Pre-Action Protocol for Housing Conditions Claims (England)](https://www.justice.gov.uk/courts/procedure-rules/civil/protocol/prot_hou):
 
 | Confirmed event | SwiftClaim calculation |
@@ -110,7 +132,8 @@ Use Ava for both supported evaluation journeys:
 2. Change Funding status to `Complete`, save onboarding, open Decision and convert. SwiftClaim creates the complete Housing Conditions matter atomically at **Evidence and notice**, then opens it in Matter 360 with the client, household, property, landlord and tenancy profile intact.
 3. Open `Clarke v Meridian Housing`, then choose **Defects & repairs** to inspect five structured defects across four locations, multi-channel notice history, access outcomes and visible evidence gaps.
 4. Choose **Evidence** to inspect readiness, overlapping risks, preserved provenance and exact immutable document-version links. Upload a synthetic document in **Documents** before testing a new evidence link.
-5. The longer-running matter remains at Pre-Action Protocol with a governed protocol deadline; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
+5. Choose **Protocol & experts** to review the approved source-linked Letter of Claim, exact private DOCX download, verified dispatch and receipt, partial by-defect landlord response, expert identity and terms, conflict decision, immutable instruction, completed inspection and the deliberately missing report risk.
+6. The longer-running matter remains at Pre-Action Protocol with governed protocol and expert deadlines; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
 
 Use Marcus to test partner-only workflow overrides. Use Lewis to see Southbank's separate Amara Jones enquiry and verify that Northstar enquiry and matter UUIDs remain invisible across firms. All names, addresses, organisations and claim details in the seed are synthetic and evaluation-only.
 
@@ -145,10 +168,13 @@ flowchart TD
   Policy --> Matter["Matter service and store"]
   Policy --> Workflow["Workflow service and store"]
   Policy --> Evidence["Evidence investigation service"]
+  Policy --> Protocol["Protocol and expert service"]
   Intake --> DB[(SQLite adapter)]
   Matter --> DB[(SQLite adapter)]
   Workflow --> DB
   Evidence --> DB
+  Protocol --> DB
+  Protocol --> Files
   Matter --> Files[Private file storage]
 ```
 
@@ -160,6 +186,7 @@ The boundaries are deliberately portable:
 - `src/server/store.ts` owns tenant-scoped matter operations;
 - `src/server/workflow/` owns workflow definitions, working-day calculations, transitions, deadlines, and Matter 360 orchestration;
 - `src/server/evidence/` owns structured defects, notice/access history, immutable evidence links, readiness, risks and its HTTP boundary;
+- `src/server/protocol/` owns source assembly, deterministic DOCX rendering, protocol and expert persistence, readiness and its HTTP boundary;
 - `src/server/storage.ts` owns immutable bytes and hashes;
 - `src/server/migrations/` owns ordered schema evolution;
 - `src/server/app.ts` maps HTTP requests to those boundaries;
@@ -173,7 +200,7 @@ The server never accepts a firm identifier from the browser. It resolves the fir
 
 Administrative and partner roles can read and write every matter and enquiry in their firm. Solicitors and paralegals need assignment, ownership or explicit membership. Conflict decisions, intake outcomes, overrides and conversion have distinct capability checks. Finance and read-only roles can read firm matters but cannot access claimant intake or mutate records. Inaccessible matters, enquiries and child resources return the same generic `404`, including resources in another firm, to avoid existence disclosure.
 
-Every tenant-owned table carries `firm_id`. Composite foreign keys prevent a child record from crossing a firm boundary. Audit, document-version, notice, access, evidence and evidence-link rows have database triggers that reject updates and deletion. Defect current state uses optimistic versions while every status change is retained separately. Uploaded names never become storage paths; files receive random storage keys and an SHA-256 digest.
+Every tenant-owned table carries `firm_id`. Composite foreign keys prevent a child record from crossing a firm boundary. Audit, document-version, notice, access, evidence, evidence-link, approved Letter, service, response, expert conflict, instruction, milestone, report, question and answer rows have database triggers that reject updates and deletion. Mutable defect, working-letter, protocol-case and expert-engagement state uses optimistic versions while evidential changes are retained separately. Uploaded and generated names never become storage paths; files receive random storage keys and an SHA-256 digest.
 
 Security acceptance tests live in:
 
@@ -224,6 +251,22 @@ The approved Step 1 design and implementation plan are in `docs/superpowers/`.
 | `POST` | `/api/matters/:matterId/notices` | Record an append-only notice or correction |
 | `POST` | `/api/matters/:matterId/access-events` | Record an append-only access event or correction |
 | `POST` | `/api/matters/:matterId/evidence-items` | Atomically link an exact document version to investigation facts |
+| `GET` | `/api/matters/:matterId/protocol-experts` | Unified protocol, response, expert, deadline, readiness, risk and permission workspace |
+| `PUT` | `/api/matters/:matterId/protocol/letter` | Save version-controlled solicitor preparation content |
+| `POST` | `/api/matters/:matterId/protocol/letter/approve` | Approve and privately generate an immutable Letter of Claim DOCX |
+| `POST` | `/api/matters/:matterId/protocol/service-events` | Record append-only dispatch, receipt, delivery or correction evidence |
+| `POST` | `/api/matters/:matterId/protocol/deadline-variations` | Record an authorised agreed deadline variation |
+| `POST` | `/api/matters/:matterId/protocol/landlord-responses` | Record an immutable by-defect landlord response |
+| `PUT` | `/api/matters/:matterId/protocol/expert-route` | Save the controlled expert route decision |
+| `POST` | `/api/matters/:matterId/experts` | Create an expert engagement |
+| `PATCH` | `/api/matters/:matterId/experts/:engagementId` | Version-control mutable identity, terms and availability fields |
+| `POST` | `/api/matters/:matterId/experts/:engagementId/conflict-checks` | Record a privileged human conflict decision |
+| `POST` | `/api/matters/:matterId/experts/:engagementId/instructions/approve` | Approve and generate an immutable expert instruction DOCX |
+| `POST` | `/api/matters/:matterId/experts/:engagementId/milestones` | Record an append-only expert event |
+| `POST` | `/api/matters/:matterId/experts/:engagementId/reports` | Link a report record to an exact document version |
+| `POST` | `/api/matters/:matterId/experts/:engagementId/questions` | Record a governed clarification question |
+| `POST` | `/api/matters/:matterId/experts/:engagementId/questions/:questionId/answers` | Link an answer to an exact document version |
+| `GET` | `/api/matters/:matterId/protocol/generated/:documentVersionId/download` | Authorised exact generated Letter or instruction download |
 | `POST` | `/api/matters/:id/workflow/transitions` | Progress a workflow with readiness and version controls |
 | `POST` | `/api/matters/:id/workflow/triggers` | Confirm a legal event and calculate its governed deadline |
 | `POST` | `/api/matters/:id/parties` | Add a matter party |
@@ -257,8 +300,8 @@ Before a live pilot, replace the evaluation adapters with managed PostgreSQL and
 
 ## Next build
 
-The next case-management slice is **Protocol & Experts** for claimant Housing Conditions work: a controlled Letter of Claim data model and generation flow, service/receipt evidence, landlord response capture, expert instruction, conflict and availability checks, inspection access, report milestones, clarification questions and governed deadline status changes.
+The next case-management slice is **Repairs and Quantum** for claimant Housing Conditions work: controlled schedules of works, repair access and completion evidence, client loss items, special damages, general-damages review, valuation provenance, offers and an approval-ready current position. Legal and valuation conclusions remain human decisions.
 
-That is followed by correspondence and communication capture, repairs and quantum, offers and settlement authority, proceedings, costs and billing, closure, reporting, integrations, then supervised AI assistance across each governed source record. Calling and messaging integrations must preserve consent, identity, recording notices, retention, audit and human-review controls.
+That is followed by correspondence and communication capture, offers and settlement authority, proceedings, costs and billing, closure, reporting, integrations, then supervised AI assistance across each governed source record. Calling and messaging integrations must preserve consent, identity, recording notices, retention, audit and human-review controls.
 
 SwiftBridge is deliberately deferred until the operational case-management model is sufficiently complete to receive Proclaim data without flattening or losing it. The current external identifiers, import-batch fields, file hashes, audit model, and integration outbox preserve the migration seam. When SwiftBridge begins, its first deliverable should be an anonymised discovery and dry-run import with source inventory, mappings, document manifest, reconciliation totals, and an exception queue before any live cutover.

@@ -21,6 +21,10 @@ export type Capability =
   | 'intake.decide'
   | 'intake.override_conflict'
   | 'intake.convert'
+  | 'protocol.prepare'
+  | 'protocol.approve'
+  | 'protocol.override_conflict'
+  | 'protocol.review_report'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -36,6 +40,10 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'intake.decide',
     'intake.override_conflict',
     'intake.convert',
+    'protocol.prepare',
+    'protocol.approve',
+    'protocol.override_conflict',
+    'protocol.review_report',
     'administration.view',
   ],
   partner: [
@@ -50,6 +58,10 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'intake.decide',
     'intake.override_conflict',
     'intake.convert',
+    'protocol.prepare',
+    'protocol.approve',
+    'protocol.override_conflict',
+    'protocol.review_report',
     'administration.view',
   ],
   solicitor: [
@@ -61,6 +73,9 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'intake.write',
     'intake.decide',
     'intake.convert',
+    'protocol.prepare',
+    'protocol.approve',
+    'protocol.review_report',
   ],
   paralegal: [
     'matter.read',
@@ -69,6 +84,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'deadline.confirm',
     'intake.read',
     'intake.write',
+    'protocol.prepare',
   ],
   finance: ['matter.read'],
   readonly: ['matter.read'],

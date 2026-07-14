@@ -10,6 +10,7 @@ import {
   Paperclip,
   Plus,
   RefreshCw,
+  Scale,
   ShieldCheck,
   Upload,
   UserRound,
@@ -26,6 +27,7 @@ import {
   type EvidenceWorkspace,
   type MatterIntakeProfile,
   type MatterSection,
+  type ProtocolWorkspace,
   type TransitionWorkflowCommand,
 } from '../api.js';
 import { Dialog } from '../components/Dialog.js';
@@ -36,6 +38,7 @@ import { MatterHeader } from '../components/matter/MatterHeader.js';
 import { MatterSectionRail } from '../components/matter/MatterSectionRail.js';
 import { OperationalOverview } from '../components/matter/OperationalOverview.js';
 import { PropertyTenancyPanel } from '../components/matter/PropertyTenancyPanel.js';
+import { ProtocolExpertsPanel } from '../components/matter/ProtocolExpertsPanel.js';
 
 interface MatterPageProps {
   matterId: string;
@@ -69,6 +72,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [evidenceWorkspace, setEvidenceWorkspace] = useState<EvidenceWorkspace>();
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState('');
+  const [protocolWorkspace, setProtocolWorkspace] = useState<ProtocolWorkspace>();
+  const [protocolLoading, setProtocolLoading] = useState(false);
+  const [protocolError, setProtocolError] = useState('');
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
@@ -125,6 +131,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setEvidenceWorkspace(undefined);
     setEvidenceLoading(false);
     setEvidenceError('');
+    setProtocolWorkspace(undefined);
+    setProtocolLoading(false);
+    setProtocolError('');
     setMutationError('');
     setSection('overview');
     void loadAll(controller.signal);
@@ -196,6 +205,28 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     return () => controller.abort();
   }, [evidenceError, evidenceSectionActive, evidenceWorkspace, loadEvidenceWorkspace]);
 
+  const loadProtocolWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setProtocolLoading(true);
+    setProtocolError('');
+    try {
+      setProtocolWorkspace(await request<ProtocolWorkspace>(
+        `/api/matters/${matterId}/protocol-experts`, { signal },
+      ));
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setProtocolError(reason instanceof Error ? reason.message : 'The protocol workspace is unavailable.');
+    } finally {
+      if (!signal?.aborted) setProtocolLoading(false);
+    }
+  }, [matterId]);
+
+  useEffect(() => {
+    if (section !== 'protocol_experts' || protocolWorkspace || protocolError) return;
+    const controller = new AbortController();
+    void loadProtocolWorkspace(controller.signal);
+    return () => controller.abort();
+  }, [loadProtocolWorkspace, protocolError, protocolWorkspace, section]);
+
   const completeTask = async (taskId: string) => {
     setUpdatingTask(taskId);
     try {
@@ -249,6 +280,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         audit: aggregate.audit.length,
         defects_repairs: evidenceWorkspace?.defects.length,
         evidence: evidenceWorkspace?.evidenceItems.length,
+        protocol_experts: protocolWorkspace?.experts.length,
       }
     : { tasks_calendar: summary.nextActions.length };
 
@@ -342,6 +374,18 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
           onRefresh={() => loadEvidenceWorkspace()}
           onNavigateDocuments={() => setSection('documents')}
         />
+      ) : null}
+
+      {section === 'protocol_experts' && protocolLoading && !protocolWorkspace ? (
+        <section className="surface tab-surface" aria-busy="true"><div className="skeleton skeleton--heading" /><div className="skeleton skeleton--matter" /></section>
+      ) : null}
+
+      {section === 'protocol_experts' && protocolError && !protocolWorkspace ? (
+        <section className="surface tab-surface page-state"><Scale size={30} /><h2>Protocol workspace unavailable</h2><p>{protocolError}</p><button className="button button--secondary" type="button" onClick={() => void loadProtocolWorkspace()}><RefreshCw size={15} /> Retry</button></section>
+      ) : null}
+
+      {section === 'protocol_experts' && protocolWorkspace ? (
+        <ProtocolExpertsPanel matterId={matterId} workspace={protocolWorkspace} onRefresh={() => loadProtocolWorkspace()} />
       ) : null}
 
       {aggregate && section === 'documents' ? (
