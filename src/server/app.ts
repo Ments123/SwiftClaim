@@ -23,6 +23,9 @@ import {
   type ApiErrorBody,
   type FirmRole,
 } from '../shared/contracts.js';
+import { EvidenceService } from './evidence/service.js';
+import { evidenceRoutes } from './evidence/routes.js';
+import { EvidenceStore } from './evidence/store.js';
 import { IntakeConflictService } from './intake/conflicts.js';
 import { intakeRoutes } from './intake/routes.js';
 import { IntakeService } from './intake/service.js';
@@ -121,7 +124,14 @@ export async function buildApp(
   const isProduction = options.isProduction ?? false;
   const matterStore = new MatterStore(database, now);
   const workflowStore = new WorkflowStore(database, now);
-  const workflowService = new WorkflowService(matterStore, workflowStore, now);
+  const evidenceStore = new EvidenceStore(database);
+  const evidenceService = new EvidenceService(evidenceStore, now);
+  const workflowService = new WorkflowService(
+    matterStore,
+    workflowStore,
+    now,
+    evidenceService,
+  );
   const intakeStore = new IntakeStore(database, now);
   const intakeService = new IntakeService(
     database,
@@ -502,6 +512,15 @@ export async function buildApp(
 
   await app.register(workflowRoutes, {
     service: workflowService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(evidenceRoutes, {
+    service: evidenceService,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,

@@ -304,6 +304,177 @@ export const convertEnquirySchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(200),
 });
 
+const evidenceDateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const evidenceIdempotencyKeySchema = z.string().trim().min(8).max(200);
+const defectCategorySchema = z.enum([
+  'damp_mould',
+  'leak',
+  'heating',
+  'electrical',
+  'structural',
+  'pest',
+  'ventilation',
+  'sanitation',
+  'other',
+]);
+const defectSeveritySchema = z.enum([
+  'low',
+  'moderate',
+  'serious',
+  'critical',
+]);
+const defectStatusSchema = z.enum([
+  'open',
+  'monitoring',
+  'repaired',
+  'disputed',
+  'superseded',
+]);
+
+export const createDefectSchema = z.object({
+  location: z.string().trim().min(2).max(120),
+  category: defectCategorySchema,
+  title: z.string().trim().min(3).max(200),
+  description: z.string().trim().min(10).max(4_000),
+  severity: defectSeveritySchema,
+  firstObservedOn: evidenceDateOnlySchema.nullable(),
+  healthImpact: z.string().trim().max(2_000).default(''),
+  hazardTags: z
+    .array(z.string().trim().min(2).max(80))
+    .max(20)
+    .default([]),
+});
+
+export const updateDefectSchema = createDefectSchema.extend({
+  expectedVersion: z.number().int().positive(),
+  status: defectStatusSchema,
+  statusReason: z.string().trim().min(10).max(1_000),
+});
+
+export const createNoticeSchema = z.object({
+  idempotencyKey: evidenceIdempotencyKeySchema,
+  occurredAt: z.string().datetime({ offset: true }),
+  channel: z.enum([
+    'email',
+    'phone',
+    'sms',
+    'whatsapp',
+    'letter',
+    'portal',
+    'in_person',
+    'other',
+  ]),
+  recipientType: z.enum([
+    'landlord',
+    'managing_agent',
+    'contractor',
+    'local_authority',
+    'other',
+  ]),
+  recipientName: z.string().trim().min(2).max(200),
+  summary: z.string().trim().min(10).max(4_000),
+  proofStatus: z.enum([
+    'linked',
+    'client_recollection',
+    'unavailable',
+    'unknown',
+  ]),
+  responseStatus: z.enum([
+    'none',
+    'acknowledged',
+    'inspection_arranged',
+    'repair_promised',
+    'repair_attempted',
+    'repaired',
+    'disputed',
+    'other',
+  ]),
+  responseSummary: z.string().trim().max(2_000).default(''),
+  supersedesNoticeId: z.string().uuid().nullable().default(null),
+});
+
+export const createAccessEventSchema = z.object({
+  idempotencyKey: evidenceIdempotencyKeySchema,
+  eventType: z.enum([
+    'offered',
+    'scheduled',
+    'attempted',
+    'completed',
+    'refused_by_landlord',
+    'refused_by_client',
+    'no_access',
+    'cancelled',
+  ]),
+  appointmentAt: z.string().datetime({ offset: true }).nullable(),
+  notes: z.string().trim().min(5).max(2_000),
+  supersedesAccessEventId: z.string().uuid().nullable().default(null),
+});
+
+const evidenceLinkIdsSchema = z.array(z.string().uuid()).max(100);
+
+export const createEvidenceItemSchema = z
+  .object({
+    idempotencyKey: evidenceIdempotencyKeySchema,
+    kind: z.enum([
+      'photograph',
+      'video',
+      'correspondence',
+      'repair_record',
+      'tenancy_record',
+      'medical_link',
+      'client_statement',
+      'other',
+    ]),
+    title: z.string().trim().min(3).max(200),
+    description: z.string().trim().min(5).max(4_000),
+    occurredOn: evidenceDateOnlySchema.nullable(),
+    provenanceSource: z.enum([
+      'client',
+      'solicitor',
+      'landlord',
+      'managing_agent',
+      'contractor',
+      'expert',
+      'medical_provider',
+      'third_party',
+      'other',
+    ]),
+    provenanceDetail: z.string().trim().min(5).max(2_000),
+    documentVersionId: z.string().uuid(),
+    defectIds: evidenceLinkIdsSchema.default([]),
+    noticeIds: evidenceLinkIdsSchema.default([]),
+    accessEventIds: evidenceLinkIdsSchema.default([]),
+  })
+  .superRefine((input, context) => {
+    const linkGroups = [
+      ['defectIds', input.defectIds],
+      ['noticeIds', input.noticeIds],
+      ['accessEventIds', input.accessEventIds],
+    ] as const;
+
+    for (const [field, ids] of linkGroups) {
+      if (new Set(ids).size !== ids.length) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Link identifiers must be unique.',
+          path: [field],
+        });
+      }
+    }
+
+    if (
+      input.defectIds.length === 0 &&
+      input.noticeIds.length === 0 &&
+      input.accessEventIds.length === 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Link the evidence to at least one investigation record.',
+        path: ['defectIds'],
+      });
+    }
+  });
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -325,6 +496,11 @@ export type SaveAssessmentInput = z.infer<typeof saveAssessmentSchema>;
 export type SaveOnboardingInput = z.infer<typeof saveOnboardingSchema>;
 export type DecideEnquiryInput = z.infer<typeof decideEnquirySchema>;
 export type ConvertEnquiryInput = z.infer<typeof convertEnquirySchema>;
+export type CreateDefectInput = z.infer<typeof createDefectSchema>;
+export type UpdateDefectInput = z.infer<typeof updateDefectSchema>;
+export type CreateNoticeInput = z.infer<typeof createNoticeSchema>;
+export type CreateAccessEventInput = z.infer<typeof createAccessEventSchema>;
+export type CreateEvidenceItemInput = z.infer<typeof createEvidenceItemSchema>;
 
 export interface ApiErrorBody {
   error: {

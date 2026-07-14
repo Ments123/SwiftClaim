@@ -2,6 +2,7 @@ import type {
   ConfirmWorkflowTriggerInput,
   TransitionWorkflowInput,
 } from '../../shared/contracts.js';
+import type { EvidenceReadinessProvider } from '../evidence/service.js';
 import { hasCapability, type SessionUser } from '../policy.js';
 import { type AuditContext, MatterStore } from '../store.js';
 import {
@@ -50,6 +51,7 @@ export class WorkflowService {
     private readonly matterStore: MatterStore,
     private readonly workflowStore: WorkflowStore,
     private readonly now: () => Date,
+    private readonly evidenceReadiness?: EvidenceReadinessProvider,
   ) {}
 
   getMatter360(user: SessionUser, matterId: string) {
@@ -264,17 +266,53 @@ export class WorkflowService {
         { checklistKey: unknownChecklistKey },
       );
     }
+    const supportedSuppliedChecklistKeys = new Set(suppliedChecklistKeys);
+    const objectiveBlockers: WorkflowBlocker[] = [];
+    if (currentStage.key === 'evidence' && this.evidenceReadiness) {
+      const readiness = this.evidenceReadiness.getEvidenceReadiness(
+        user.firmId,
+        matterId,
+      );
+      const controls = new Map(
+        readiness.controls.map((control) => [control.key, control]),
+      );
+      for (const key of suppliedChecklistKeys.filter((candidate) =>
+        currentStage.requiredChecklistKeys.includes(candidate),
+      )) {
+        const control = controls.get(
+          key as 'defect_schedule_recorded' | 'notice_evidence_recorded' | 'photographs_recorded',
+        );
+        if (!control?.eligible) {
+          supportedSuppliedChecklistKeys.delete(key);
+          objectiveBlockers.push({
+            key,
+            label:
+              control?.explanation ??
+              `${checklistLabel(key)} is not supported by the evidence record.`,
+            severity: 'warning',
+          });
+        }
+      }
+    }
     const completed = new Set([
       ...this.workflowStore.listCompletedChecklistKeys(user.firmId, matterId),
-      ...suppliedChecklistKeys,
+      ...supportedSuppliedChecklistKeys,
     ]);
-    const blockers = currentStage.requiredChecklistKeys
+    const checklistBlockers = currentStage.requiredChecklistKeys
       .filter((key) => !completed.has(key))
       .map((key): WorkflowBlocker => ({
         key,
         label: checklistLabel(key),
         severity: checklistSeverity(key),
       }));
+    const blockers = [
+      ...new Map(
+        [...checklistBlockers, ...objectiveBlockers].map((blocker) => [
+          blocker.key,
+          objectiveBlockers.find(({ key }) => key === blocker.key) ?? blocker,
+        ]),
+      ).values(),
+    ];
 
     const overrideReason = input.overrideReason?.trim();
     if (overrideReason && !hasCapability(user, 'workflow.override')) {
@@ -307,7 +345,7 @@ export class WorkflowService {
         actorUserId: user.id,
         toStageKey: input.toStageKey,
         expectedVersion: input.expectedVersion,
-        completedChecklistKeys: suppliedChecklistKeys,
+        completedChecklistKeys: [...supportedSuppliedChecklistKeys],
         reason,
         blockers,
         overrideReason,

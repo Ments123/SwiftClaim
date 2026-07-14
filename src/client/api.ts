@@ -407,6 +407,114 @@ export interface Matter360Data {
   };
 }
 
+export interface EvidenceDocumentVersion {
+  id: string;
+  documentId: string;
+  documentTitle: string;
+  category: string;
+  version: number;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+}
+
+export interface EvidenceDefect {
+  id: string;
+  version: number;
+  location: string;
+  category: 'damp_mould' | 'leak' | 'heating' | 'electrical' | 'structural' | 'pest' | 'ventilation' | 'sanitation' | 'other';
+  title: string;
+  description: string;
+  severity: 'low' | 'moderate' | 'serious' | 'critical';
+  status: 'open' | 'monitoring' | 'repaired' | 'disputed' | 'superseded';
+  firstObservedOn: string | null;
+  healthImpact: string;
+  hazardTags: string[];
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  evidenceIds: string[];
+  statusEvents: Array<{
+    id: string;
+    fromStatus: EvidenceDefect['status'] | null;
+    toStatus: EvidenceDefect['status'];
+    reason: string;
+    actorUserId: string;
+    occurredAt: string;
+  }>;
+}
+
+export interface EvidenceNotice {
+  id: string;
+  occurredAt: string;
+  channel: 'email' | 'phone' | 'sms' | 'whatsapp' | 'letter' | 'portal' | 'in_person' | 'other';
+  recipientType: 'landlord' | 'managing_agent' | 'contractor' | 'local_authority' | 'other';
+  recipientName: string;
+  summary: string;
+  proofStatus: 'linked' | 'client_recollection' | 'unavailable' | 'unknown';
+  responseStatus: 'none' | 'acknowledged' | 'inspection_arranged' | 'repair_promised' | 'repair_attempted' | 'repaired' | 'disputed' | 'other';
+  responseSummary: string;
+  supersedesNoticeId: string | null;
+  createdBy: string;
+  createdAt: string;
+  evidenceIds: string[];
+}
+
+export interface EvidenceAccessEvent {
+  id: string;
+  eventType: 'offered' | 'scheduled' | 'attempted' | 'completed' | 'refused_by_landlord' | 'refused_by_client' | 'no_access' | 'cancelled';
+  appointmentAt: string | null;
+  notes: string;
+  supersedesAccessEventId: string | null;
+  createdBy: string;
+  createdAt: string;
+  evidenceIds: string[];
+}
+
+export interface EvidenceItemRecord {
+  id: string;
+  kind: 'photograph' | 'video' | 'correspondence' | 'repair_record' | 'tenancy_record' | 'medical_link' | 'client_statement' | 'other';
+  title: string;
+  description: string;
+  occurredOn: string | null;
+  provenanceSource: 'client' | 'solicitor' | 'landlord' | 'managing_agent' | 'contractor' | 'expert' | 'medical_provider' | 'third_party' | 'other';
+  provenanceDetail: string;
+  documentVersion: EvidenceDocumentVersion;
+  defectIds: string[];
+  noticeIds: string[];
+  accessEventIds: string[];
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface EvidenceWorkspace {
+  matterId: string;
+  permissions: { canWrite: boolean };
+  defects: EvidenceDefect[];
+  notices: EvidenceNotice[];
+  accessEvents: EvidenceAccessEvent[];
+  evidenceItems: EvidenceItemRecord[];
+  availableDocumentVersions: EvidenceDocumentVersion[];
+  readiness: {
+    controls: Array<{
+      key: 'defect_schedule_recorded' | 'notice_evidence_recorded' | 'photographs_recorded';
+      eligible: boolean;
+      explanation: string;
+    }>;
+  };
+  risks: Array<{
+    key: string;
+    type: 'serious_open_defect' | 'defect_without_evidence' | 'notice_proof_gap' | 'notice_evidence_missing' | 'failed_access' | 'photographs_missing' | 'ineligible_control';
+    level: 'medium' | 'high' | 'critical';
+    title: string;
+    detail: string;
+    entityId: string | null;
+  }>;
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'

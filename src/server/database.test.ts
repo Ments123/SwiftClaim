@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createDatabase, seedDatabase, SEED_IDS } from './database.js';
 import { IntakeService } from './intake/service.js';
 import { IntakeStore } from './intake/store.js';
+import { EvidenceStore } from './evidence/store.js';
 import type { SessionUser } from './policy.js';
 import { MatterStore } from './store.js';
 import { calculateDeadline } from './workflow/calendar.js';
@@ -13,6 +14,13 @@ import {
 } from './workflow/definitions.js';
 import { WorkflowService } from './workflow/service.js';
 import { WorkflowStore } from './workflow/store.js';
+import {
+  createAccessEventSchema,
+  createDefectSchema,
+  createEvidenceItemSchema,
+  createNoticeSchema,
+  updateDefectSchema,
+} from '../shared/contracts.js';
 
 const FIXED_NOW = new Date('2026-07-15T09:00:00.000Z');
 
@@ -28,7 +36,10 @@ const ava: SessionUser = {
 describe('canonical database', () => {
   let database: DatabaseSync | undefined;
 
-  afterEach(() => database?.close());
+  afterEach(() => {
+    database?.close();
+    database = undefined;
+  });
 
   it('creates the tenant-owned tables and enforces foreign keys', () => {
     database = createDatabase(':memory:');
@@ -73,6 +84,14 @@ describe('canonical database', () => {
         'intake_conversions',
         'intake_audit_events',
         'reference_sequences',
+        'defects',
+        'defect_status_events',
+        'notices',
+        'access_events',
+        'evidence_items',
+        'defect_evidence_links',
+        'notice_evidence_links',
+        'access_evidence_links',
       ]),
     );
     expect(database.prepare('PRAGMA foreign_keys').get()).toEqual({
@@ -106,7 +125,168 @@ describe('canonical database', () => {
         name: 'intake and onboarding',
         checksumLength: 64,
       },
+      {
+        version: 4,
+        name: 'defects notice and evidence',
+        checksumLength: 64,
+      },
     ]);
+  });
+
+  it('enforces evidence versions, tenant links and append-only records', () => {
+    database = createDatabase(':memory:');
+    seedDatabase(database);
+    const now = '2026-07-15T09:00:00.000Z';
+    const defectId = 'd1000000-0000-4000-8000-000000000001';
+    const noticeId = 'd2000000-0000-4000-8000-000000000001';
+
+    expect(() =>
+      database?.prepare(
+        `INSERT INTO defects (
+          id, firm_id, matter_id, version, location, category, title,
+          description, severity, status, first_observed_on, health_impact,
+          hazard_tags_json, created_by, created_at, updated_by, updated_at
+        ) VALUES (?, ?, ?, 0, 'Bedroom', 'damp_mould', 'Bedroom mould',
+          'Mould is visible around the bedroom window.', 'serious', 'open',
+          NULL, '', '[]', ?, ?, ?, ?)`,
+      ).run(
+        defectId,
+        SEED_IDS.northstarFirm,
+        SEED_IDS.northstarMatter,
+        SEED_IDS.ava,
+        now,
+        SEED_IDS.ava,
+        now,
+      ),
+    ).toThrow(/CHECK constraint failed/);
+
+    database
+      .prepare(
+        `INSERT INTO defects (
+          id, firm_id, matter_id, version, location, category, title,
+          description, severity, status, first_observed_on, health_impact,
+          hazard_tags_json, created_by, created_at, updated_by, updated_at
+        ) VALUES (?, ?, ?, 1, 'Bedroom', 'damp_mould', 'Bedroom mould',
+          'Mould is visible around the bedroom window.', 'serious', 'open',
+          NULL, '', '[]', ?, ?, ?, ?)`,
+      )
+      .run(
+        defectId,
+        SEED_IDS.northstarFirm,
+        SEED_IDS.northstarMatter,
+        SEED_IDS.ava,
+        now,
+        SEED_IDS.ava,
+        now,
+      );
+    database
+      .prepare(
+        `INSERT INTO notices (
+          id, firm_id, matter_id, occurred_at, channel, recipient_type,
+          recipient_name, summary, proof_status, response_status,
+          response_summary, supersedes_notice_id, idempotency_key,
+          command_payload_json, created_by, created_at
+        ) VALUES (?, ?, ?, ?, 'email', 'landlord', 'Meridian Housing',
+          'Reported bedroom mould and asked for an inspection.', 'linked',
+          'acknowledged', 'Landlord acknowledged receipt.', NULL,
+          'notice-test-001', '{}', ?, ?)`,
+      )
+      .run(
+        noticeId,
+        SEED_IDS.northstarFirm,
+        SEED_IDS.northstarMatter,
+        now,
+        SEED_IDS.ava,
+        now,
+      );
+
+    expect(() =>
+      database?.exec(`UPDATE notices SET summary = 'Rewritten'`),
+    ).toThrow(/append-only/);
+    expect(() => database?.exec('DELETE FROM notices')).toThrow(/append-only/);
+
+    expect(() =>
+      database?.prepare(
+        `INSERT INTO notice_evidence_links (
+          firm_id, matter_id, evidence_item_id, notice_id, linked_by, linked_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(
+        SEED_IDS.northstarFirm,
+        SEED_IDS.northstarRestrictedMatter,
+        'd3000000-0000-4000-8000-000000000001',
+        noticeId,
+        SEED_IDS.ava,
+        now,
+      ),
+    ).toThrow(/FOREIGN KEY constraint failed/);
+  });
+
+  it('rejects ambiguous evidence command payloads at the contract boundary', () => {
+    expect(
+      createDefectSchema.safeParse({
+        location: 'B',
+        category: 'damp_mould',
+        title: 'No',
+        description: 'Too short',
+        severity: 'urgent',
+        firstObservedOn: '15/07/2026',
+      }).success,
+    ).toBe(false);
+    expect(
+      updateDefectSchema.safeParse({
+        location: 'Bedroom',
+        category: 'damp_mould',
+        title: 'Bedroom mould',
+        description: 'Visible mould around the bedroom window.',
+        severity: 'serious',
+        firstObservedOn: null,
+        expectedVersion: 0,
+        status: 'open',
+        statusReason: 'short',
+      }).success,
+    ).toBe(false);
+    expect(createNoticeSchema.safeParse({ idempotencyKey: 'short' }).success).toBe(
+      false,
+    );
+    expect(
+      createAccessEventSchema.safeParse({
+        idempotencyKey: 'access-test-001',
+        eventType: 'invented',
+      }).success,
+    ).toBe(false);
+    expect(
+      createEvidenceItemSchema.safeParse({
+        idempotencyKey: 'evidence-test-001',
+        kind: 'photograph',
+        title: 'Bedroom mould photograph',
+        description: 'Synthetic evaluation evidence.',
+        occurredOn: '2026-07-01',
+        provenanceSource: 'client',
+        provenanceDetail: 'Received from the client by email.',
+        documentVersionId: 'd4000000-0000-4000-8000-000000000001',
+        defectIds: [],
+        noticeIds: [],
+        accessEventIds: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      createEvidenceItemSchema.safeParse({
+        idempotencyKey: 'evidence-test-002',
+        kind: 'photograph',
+        title: 'Bedroom mould photograph',
+        description: 'Synthetic evaluation evidence.',
+        occurredOn: '2026-07-01',
+        provenanceSource: 'client',
+        provenanceDetail: 'Received from the client by email.',
+        documentVersionId: 'd4000000-0000-4000-8000-000000000001',
+        defectIds: [
+          'd1000000-0000-4000-8000-000000000001',
+          'd1000000-0000-4000-8000-000000000001',
+        ],
+        noticeIds: [],
+        accessEventIds: [],
+      }).success,
+    ).toBe(false);
   });
 
   it('enforces intake tenant boundaries and immutable decision history', () => {
@@ -396,6 +576,50 @@ describe('canonical database', () => {
     });
     expect(store.getEnquiry(ava, SEED_IDS.southbankEnquiry)).toBeUndefined();
     expect(store.getEnquiry(lewis, SEED_IDS.leahEnquiry)).toBeUndefined();
+  });
+
+  it('seeds the synthetic evidence investigation idempotently and tenant-safely', () => {
+    database = createDatabase(':memory:');
+    seedDatabase(database);
+    seedDatabase(database);
+    const store = new EvidenceStore(database);
+    const workspace = store.getWorkspace(ava, SEED_IDS.northstarMatter);
+    const lewis: SessionUser = {
+      id: SEED_IDS.southbankUser,
+      firmId: SEED_IDS.southbankFirm,
+      firmName: 'Southbank Law',
+      email: 'lewis@southbank.test',
+      name: 'Lewis Grant',
+      role: 'partner',
+    };
+
+    expect(workspace?.defects).toHaveLength(5);
+    expect(
+      new Set(workspace?.defects.map(({ location }) => location)).size,
+    ).toBe(4);
+    expect(workspace?.notices.map(({ channel }) => channel)).toEqual(
+      expect.arrayContaining(['email', 'phone', 'whatsapp']),
+    );
+    expect(workspace?.accessEvents.length).toBeGreaterThan(0);
+    expect(
+      workspace?.evidenceItems.filter(({ kind }) => kind === 'photograph')
+        .length,
+    ).toBeGreaterThan(0);
+    expect(workspace?.evidenceItems[0]?.description).toContain(
+      'Synthetic evaluation evidence',
+    );
+    expect(workspace?.risks.map(({ type }) => type)).toContain(
+      'defect_without_evidence',
+    );
+    expect(
+      workspace?.availableDocumentVersions.every(
+        ({ sha256 }) => sha256.length === 64,
+      ),
+    ).toBe(true);
+    expect(store.getWorkspace(lewis, SEED_IDS.northstarMatter)).toBeUndefined();
+    expect(
+      database.prepare('SELECT COUNT(*) AS count FROM defects').get(),
+    ).toEqual({ count: 5 });
   });
 
   it('seeds a protocol-stage synthetic housing conditions matter', () => {

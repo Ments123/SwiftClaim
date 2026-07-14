@@ -47,9 +47,9 @@ const SECTION_ITEMS: ReadonlyArray<{
     id: 'defects_repairs',
     label: 'Defects & repairs',
     icon: FileSearch,
-    available: false,
+    available: true,
   },
-  { id: 'evidence', label: 'Evidence', icon: ShieldCheck, available: false },
+  { id: 'evidence', label: 'Evidence', icon: ShieldCheck, available: true },
   { id: 'documents', label: 'Documents', icon: FileText, available: true },
   {
     id: 'communications',

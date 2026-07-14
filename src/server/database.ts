@@ -45,10 +45,34 @@ export const SEED_IDS = {
   mayaTenancy: '48000000-0000-4000-8000-000000000003',
   mayaHousingCase: '49000000-0000-4000-8000-000000000003',
   mayaConversion: '4a000000-0000-4000-8000-000000000003',
+  bedroomDampDefect: '71000000-0000-4000-8000-000000000001',
+  bathroomLeakDefect: '71000000-0000-4000-8000-000000000002',
+  kitchenVentDefect: '71000000-0000-4000-8000-000000000003',
+  heatingDefect: '71000000-0000-4000-8000-000000000004',
+  communalIngressDefect: '71000000-0000-4000-8000-000000000005',
+  emailNotice: '72000000-0000-4000-8000-000000000001',
+  phoneNotice: '72000000-0000-4000-8000-000000000002',
+  whatsappNotice: '72000000-0000-4000-8000-000000000003',
+  completedAccess: '73000000-0000-4000-8000-000000000001',
+  missedAccess: '73000000-0000-4000-8000-000000000002',
+  scheduledAccess: '73000000-0000-4000-8000-000000000003',
+  bedroomPhotoDocument: '74000000-0000-4000-8000-000000000001',
+  complaintDocument: '74000000-0000-4000-8000-000000000002',
+  repairDocument: '74000000-0000-4000-8000-000000000003',
+  bathroomPhotoDocument: '74000000-0000-4000-8000-000000000004',
+  bedroomPhotoVersion: '75000000-0000-4000-8000-000000000001',
+  complaintVersion: '75000000-0000-4000-8000-000000000002',
+  repairVersion: '75000000-0000-4000-8000-000000000003',
+  bathroomPhotoVersion: '75000000-0000-4000-8000-000000000004',
+  bedroomPhotoEvidence: '76000000-0000-4000-8000-000000000001',
+  complaintEvidence: '76000000-0000-4000-8000-000000000002',
+  repairEvidence: '76000000-0000-4000-8000-000000000003',
+  bathroomPhotoEvidence: '76000000-0000-4000-8000-000000000004',
 } as const;
 
 interface SeedDatabaseOptions {
   includeIntakePilot?: boolean;
+  includeEvidenceInvestigation?: boolean;
 }
 
 
@@ -390,6 +414,347 @@ export function seedDatabase(
   seedWorkflowDefinitions(database, now);
   seedHousingWorkflowMatter(database);
   if (options.includeIntakePilot !== false) seedClaimantIntakePilot(database);
+  if (options.includeEvidenceInvestigation !== false) {
+    seedEvidenceInvestigation(database);
+  }
+}
+
+function seedEvidenceInvestigation(database: DatabaseSync): void {
+  const firmId = SEED_IDS.northstarFirm;
+  const matterId = SEED_IDS.northstarMatter;
+  const actorId = SEED_IDS.ava;
+  const createdAt = '2026-07-13T08:30:00.000Z';
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const insertDefect = database.prepare(
+      `INSERT OR IGNORE INTO defects (
+        id, firm_id, matter_id, version, location, category, title,
+        description, severity, status, first_observed_on, health_impact,
+        hazard_tags_json, created_by, created_at, updated_by, updated_at
+      ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const defects = [
+      [
+        SEED_IDS.bedroomDampDefect,
+        'Main bedroom',
+        'damp_mould',
+        'Damp and black mould around window',
+        'Persistent damp staining and black mould are visible around the window reveal.',
+        'serious',
+        'open',
+        '2025-10-12',
+        'Client reports the bedroom is difficult to use and records respiratory concern.',
+        JSON.stringify(['damp', 'mould', 'respiratory concern']),
+      ],
+      [
+        SEED_IDS.bathroomLeakDefect,
+        'Bathroom',
+        'leak',
+        'Leak beneath bath and damaged flooring',
+        'Water escapes beneath the bath and has damaged the adjacent floor covering.',
+        'moderate',
+        'monitoring',
+        '2026-01-18',
+        '',
+        JSON.stringify(['water ingress', 'slip concern']),
+      ],
+      [
+        SEED_IDS.kitchenVentDefect,
+        'Kitchen',
+        'ventilation',
+        'Extractor fan does not operate',
+        'The kitchen extractor fan does not run and condensation remains after cooking.',
+        'moderate',
+        'open',
+        '2025-12-02',
+        '',
+        JSON.stringify(['ventilation', 'condensation']),
+      ],
+      [
+        SEED_IDS.heatingDefect,
+        'Whole property',
+        'heating',
+        'Intermittent central heating',
+        'The heating cuts out repeatedly and does not reliably warm the dwelling.',
+        'serious',
+        'open',
+        '2025-11-20',
+        'Client reports cold overnight periods affecting the household.',
+        JSON.stringify(['cold', 'heating']),
+      ],
+      [
+        SEED_IDS.communalIngressDefect,
+        'Whole property',
+        'structural',
+        'Communal water ingress affects internal wall',
+        'Water reported from the communal elevation tracks onto an internal wall after rain.',
+        'serious',
+        'disputed',
+        '2026-02-11',
+        '',
+        JSON.stringify(['water ingress', 'communal origin']),
+      ],
+    ] as const;
+    for (const defect of defects) {
+      insertDefect.run(
+        defect[0],
+        firmId,
+        matterId,
+        ...defect.slice(1),
+        actorId,
+        createdAt,
+        actorId,
+        createdAt,
+      );
+    }
+
+    const insertStatus = database.prepare(
+      `INSERT OR IGNORE INTO defect_status_events (
+        id, firm_id, matter_id, defect_id, from_status, to_status, reason,
+        actor_user_id, occurred_at
+      ) VALUES (?, ?, ?, ?, NULL, ?,
+        'Synthetic evaluation defect imported into the structured schedule.', ?, ?)`,
+    );
+    defects.forEach((defect, index) => {
+      insertStatus.run(
+        `71100000-0000-4000-8000-00000000000${index + 1}`,
+        firmId,
+        matterId,
+        defect[0],
+        defect[6],
+        actorId,
+        createdAt,
+      );
+    });
+
+    const insertNotice = database.prepare(
+      `INSERT OR IGNORE INTO notices (
+        id, firm_id, matter_id, occurred_at, channel, recipient_type,
+        recipient_name, summary, proof_status, response_status,
+        response_summary, supersedes_notice_id, idempotency_key,
+        command_payload_json, created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'landlord', 'Meridian Housing Association',
+        ?, ?, ?, ?, NULL, ?, '{}', ?, ?)`,
+    );
+    insertNotice.run(
+      SEED_IDS.emailNotice,
+      firmId,
+      matterId,
+      '2025-11-03T09:15:00.000Z',
+      'email',
+      'Reported bedroom damp, mould and heating failure and requested inspection.',
+      'linked',
+      'acknowledged',
+      'Landlord repairs inbox acknowledged receipt.',
+      'seed-evidence-email-notice',
+      actorId,
+      createdAt,
+    );
+    insertNotice.run(
+      SEED_IDS.phoneNotice,
+      firmId,
+      matterId,
+      '2025-12-08T14:40:00.000Z',
+      'phone',
+      'Client recalls chasing the landlord about heating and kitchen ventilation.',
+      'client_recollection',
+      'repair_promised',
+      'Client records that an operative visit was promised.',
+      'seed-evidence-phone-notice',
+      actorId,
+      createdAt,
+    );
+    insertNotice.run(
+      SEED_IDS.whatsappNotice,
+      firmId,
+      matterId,
+      '2026-02-12T18:05:00.000Z',
+      'whatsapp',
+      'Reported communal water ingress after heavy rain.',
+      'unknown',
+      'none',
+      '',
+      'seed-evidence-whatsapp-notice',
+      actorId,
+      createdAt,
+    );
+
+    const insertAccess = database.prepare(
+      `INSERT OR IGNORE INTO access_events (
+        id, firm_id, matter_id, event_type, appointment_at, notes,
+        supersedes_access_event_id, idempotency_key, command_payload_json,
+        created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, '{}', ?, ?)`,
+    );
+    insertAccess.run(
+      SEED_IDS.completedAccess,
+      firmId,
+      matterId,
+      'completed',
+      '2025-11-18T10:00:00.000Z',
+      'Landlord operative attended and inspected the bedroom window and heating.',
+      'seed-evidence-access-completed',
+      actorId,
+      createdAt,
+    );
+    insertAccess.run(
+      SEED_IDS.missedAccess,
+      firmId,
+      matterId,
+      'no_access',
+      '2026-01-22T13:00:00.000Z',
+      'Contractor did not attend the arranged bathroom appointment.',
+      'seed-evidence-access-missed',
+      actorId,
+      createdAt,
+    );
+    insertAccess.run(
+      SEED_IDS.scheduledAccess,
+      firmId,
+      matterId,
+      'scheduled',
+      '2026-07-20T09:30:00.000Z',
+      'Follow-up access is scheduled for heating and water ingress inspection.',
+      'seed-evidence-access-scheduled',
+      actorId,
+      createdAt,
+    );
+
+    const insertDocument = database.prepare(
+      `INSERT OR IGNORE INTO documents (
+        id, firm_id, matter_id, title, category, external_source, external_id,
+        import_batch_id, created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'synthetic-evaluation', ?,
+        'seed-evidence-2026-07', ?, ?)`,
+    );
+    const documents = [
+      [
+        SEED_IDS.bedroomPhotoDocument,
+        'Synthetic evaluation evidence - bedroom photographs',
+        'Photographs',
+        'SYN-EVID-001',
+      ],
+      [
+        SEED_IDS.complaintDocument,
+        'Synthetic evaluation evidence - complaint email',
+        'Correspondence',
+        'SYN-EVID-002',
+      ],
+      [
+        SEED_IDS.repairDocument,
+        'Synthetic evaluation evidence - heating attendance record',
+        'Repair records',
+        'SYN-EVID-003',
+      ],
+      [
+        SEED_IDS.bathroomPhotoDocument,
+        'Synthetic evaluation evidence - bathroom photograph',
+        'Photographs',
+        'SYN-EVID-004',
+      ],
+    ] as const;
+    for (const document of documents) {
+      insertDocument.run(
+        document[0],
+        firmId,
+        matterId,
+        document[1],
+        document[2],
+        document[3],
+        actorId,
+        createdAt,
+      );
+    }
+
+    const insertVersion = database.prepare(
+      `INSERT OR IGNORE INTO document_versions (
+        id, firm_id, document_id, version, original_name, mime_type,
+        size_bytes, sha256, storage_key, uploaded_by, created_at
+      ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const versions = [
+      [SEED_IDS.bedroomPhotoVersion, SEED_IDS.bedroomPhotoDocument, 'bedroom-mould-synthetic.jpg', 'image/jpeg', 245120, '1'.repeat(64), 'synthetic/evidence/bedroom-mould.jpg'],
+      [SEED_IDS.complaintVersion, SEED_IDS.complaintDocument, 'complaint-email-synthetic.pdf', 'application/pdf', 98304, '2'.repeat(64), 'synthetic/evidence/complaint-email.pdf'],
+      [SEED_IDS.repairVersion, SEED_IDS.repairDocument, 'heating-attendance-synthetic.pdf', 'application/pdf', 112640, '3'.repeat(64), 'synthetic/evidence/heating-attendance.pdf'],
+      [SEED_IDS.bathroomPhotoVersion, SEED_IDS.bathroomPhotoDocument, 'bathroom-leak-synthetic.jpg', 'image/jpeg', 198144, '4'.repeat(64), 'synthetic/evidence/bathroom-leak.jpg'],
+    ] as const;
+    for (const version of versions) {
+      insertVersion.run(
+        version[0],
+        firmId,
+        version[1],
+        version[2],
+        version[3],
+        version[4],
+        version[5],
+        version[6],
+        actorId,
+        createdAt,
+      );
+    }
+
+    const insertEvidence = database.prepare(
+      `INSERT OR IGNORE INTO evidence_items (
+        id, firm_id, matter_id, kind, title, description, occurred_on,
+        provenance_source, provenance_detail, document_version_id,
+        idempotency_key, command_payload_json, created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)`,
+    );
+    const items = [
+      [SEED_IDS.bedroomPhotoEvidence, 'photograph', 'Bedroom mould photograph', 'Synthetic evaluation evidence showing mould around the bedroom window.', '2026-07-10', 'client', 'Synthetic file supplied by the evaluation client.', SEED_IDS.bedroomPhotoVersion, 'seed-evidence-item-bedroom'],
+      [SEED_IDS.complaintEvidence, 'correspondence', 'Initial complaint email', 'Synthetic evaluation evidence preserving the email complaint and acknowledgement.', '2025-11-03', 'client', 'Synthetic email export supplied by the evaluation client.', SEED_IDS.complaintVersion, 'seed-evidence-item-complaint'],
+      [SEED_IDS.repairEvidence, 'repair_record', 'Heating attendance record', 'Synthetic evaluation evidence recording an operative attendance without completion proof.', '2025-11-18', 'landlord', 'Synthetic repair record disclosed for evaluation.', SEED_IDS.repairVersion, 'seed-evidence-item-repair'],
+      [SEED_IDS.bathroomPhotoEvidence, 'photograph', 'Bathroom leak photograph', 'Synthetic evaluation evidence showing water beneath the bath edge.', '2026-01-19', 'client', 'Synthetic file supplied by the evaluation client.', SEED_IDS.bathroomPhotoVersion, 'seed-evidence-item-bathroom'],
+    ] as const;
+    for (const item of items) {
+      insertEvidence.run(
+        item[0],
+        firmId,
+        matterId,
+        item[1],
+        item[2],
+        item[3],
+        item[4],
+        item[5],
+        item[6],
+        item[7],
+        item[8],
+        actorId,
+        createdAt,
+      );
+    }
+
+    const insertDefectLink = database.prepare(
+      `INSERT OR IGNORE INTO defect_evidence_links (
+        firm_id, matter_id, evidence_item_id, defect_id, linked_by, linked_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    insertDefectLink.run(firmId, matterId, SEED_IDS.bedroomPhotoEvidence, SEED_IDS.bedroomDampDefect, actorId, createdAt);
+    insertDefectLink.run(firmId, matterId, SEED_IDS.repairEvidence, SEED_IDS.heatingDefect, actorId, createdAt);
+    insertDefectLink.run(firmId, matterId, SEED_IDS.bathroomPhotoEvidence, SEED_IDS.bathroomLeakDefect, actorId, createdAt);
+
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO notice_evidence_links (
+          firm_id, matter_id, evidence_item_id, notice_id, linked_by, linked_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(firmId, matterId, SEED_IDS.complaintEvidence, SEED_IDS.emailNotice, actorId, createdAt);
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO access_evidence_links (
+          firm_id, matter_id, evidence_item_id, access_event_id, linked_by,
+          linked_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(firmId, matterId, SEED_IDS.repairEvidence, SEED_IDS.completedAccess, actorId, createdAt);
+
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 interface SeedEnquiryFoundation {

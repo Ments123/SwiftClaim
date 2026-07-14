@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 
-import { runMigrations } from './migrations/index.js';
+import { migrations, runMigrations } from './migrations/index.js';
 import type { Migration } from './migrations/types.js';
 
 function memoryDatabase() {
@@ -9,6 +9,20 @@ function memoryDatabase() {
 }
 
 describe('runMigrations', () => {
+  it('exposes the canonical migrations in version order', () => {
+    expect(
+      migrations.map(({ version, name }) => ({ version, name })),
+    ).toEqual([
+      { version: 1, name: 'secure matter spine' },
+      { version: 2, name: 'workflow foundation' },
+      { version: 3, name: 'intake and onboarding' },
+      { version: 4, name: 'defects notice and evidence' },
+    ]);
+    expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
+      true,
+    );
+  });
+
   it('applies migrations once in version order and records checksums', () => {
     const database = memoryDatabase();
     const migrations: Migration[] = [

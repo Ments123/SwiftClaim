@@ -1,6 +1,6 @@
 # SwiftClaim Litigation
 
-SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine, governed claimant intake and onboarding, atomic matter opening, the first operational Housing Conditions workflow, and a Matter 360 workspace. It is not yet the complete case-management programme.
+SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine, governed claimant intake and onboarding, atomic matter opening, a structured Housing Conditions evidence investigation, the first operational workflow, and a Matter 360 workspace. It is not yet the complete case-management programme.
 
 This repository contains a real full-stack application, not a static prototype. The React interface uses a Fastify API, a durable SQLite database, private file storage, secure sessions, firm and matter-level access rules, versioned workflows, explainable deadline calculations, and append-only evidential records.
 
@@ -16,6 +16,9 @@ This repository contains a real full-stack application, not a static prototype. 
 - canonical contacts, households, properties, landlords and tenancies linked into Matter 360;
 - parties, tasks, assignments, completion history, and matter chronology;
 - private document upload, SHA-256 hashing, immutable version rows, and authorised downloads;
+- structured defects with optimistic versions and append-only status history;
+- immutable landlord notice, access and evidence records linked to exact document versions;
+- explainable evidence readiness and simultaneous investigation risk flags;
 - append-only audit records protected by database triggers;
 - ordered, transactional database migrations;
 - responsive desktop, tablet, and mobile interface;
@@ -48,6 +51,23 @@ AI drafting, document analysis, call transcription and WhatsApp calling are part
 - versioned workflow definitions, deadline rules, and business calendars so a live matter remains tied to the rule set used at the time;
 - immutable deadlines with calculation explanations, source references, status history, generated tasks, audit entries, domain events, and an integration outbox;
 - a realistic synthetic evaluation matter, `Clarke v Meridian Housing`, for claimant Maya Clarke at 18 Alder Court, Salford.
+
+### Defects, notice and evidence
+
+- active **Defects & repairs** and **Evidence** Matter 360 sections sharing one lazily loaded investigation resource;
+- location-grouped defect schedules with controlled categories, severity, status, reported health impact and descriptive escalation tags;
+- optimistic defect updates with append-only status history and an explicit reason for state changes;
+- append-only notice chronology covering recipient, channel, proof position, response and correction-by-supersession;
+- append-only access history covering offered, scheduled, attempted, completed, refused, no-access and cancelled events;
+- evidential classifications for photographs, video, correspondence, repair records, tenancy records, medical links, client statements and other material;
+- every evidence item points to one exact immutable document version and displays its filename, version, SHA-256 prefix and provenance;
+- atomic links from evidence to defects, notices or access events, with cross-matter and cross-firm targets rejected;
+- deterministic readiness controls for the defect schedule, notice proof position and defect-linked photographs;
+- all applicable risk flags are returned together, including serious unresolved defects, unlinked defects, notice proof gaps, failed access and missing photographs;
+- browser checklist ticks cannot declare objective evidence complete—the workflow validates each supplied control against the server projection;
+- partner/admin override remains available only with an explicit reason and retains unresolved objective blockers in immutable history.
+
+SwiftClaim records source facts and review controls. It does not determine liability, breach, causation, limitation, hazard classification or quantum.
 
 The initial deadline rules are grounded in the official [Pre-Action Protocol for Housing Conditions Claims (England)](https://www.justice.gov.uk/courts/procedure-rules/civil/protocol/prot_hou):
 
@@ -88,7 +108,9 @@ Use Ava for both supported evaluation journeys:
 
 1. Open **Enquiries**, then open `Leah Benton` at 42 Hazel Walk. Her conflict and legal review are complete and the enquiry is accepted. Every onboarding control is complete except **Funding status**, which is intentionally `Pending`.
 2. Change Funding status to `Complete`, save onboarding, open Decision and convert. SwiftClaim creates the complete Housing Conditions matter atomically at **Evidence and notice**, then opens it in Matter 360 with the client, household, property, landlord and tenancy profile intact.
-3. Open `Clarke v Meridian Housing` to inspect the longer-running synthetic matter at Pre-Action Protocol, including Maya Clarke's complete converted intake profile and governed protocol deadline.
+3. Open `Clarke v Meridian Housing`, then choose **Defects & repairs** to inspect five structured defects across four locations, multi-channel notice history, access outcomes and visible evidence gaps.
+4. Choose **Evidence** to inspect readiness, overlapping risks, preserved provenance and exact immutable document-version links. Upload a synthetic document in **Documents** before testing a new evidence link.
+5. The longer-running matter remains at Pre-Action Protocol with a governed protocol deadline; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
 
 Use Marcus to test partner-only workflow overrides. Use Lewis to see Southbank's separate Amara Jones enquiry and verify that Northstar enquiry and matter UUIDs remain invisible across firms. All names, addresses, organisations and claim details in the seed are synthetic and evaluation-only.
 
@@ -122,9 +144,11 @@ flowchart TD
   Policy --> Intake["Intake and onboarding service"]
   Policy --> Matter["Matter service and store"]
   Policy --> Workflow["Workflow service and store"]
+  Policy --> Evidence["Evidence investigation service"]
   Intake --> DB[(SQLite adapter)]
   Matter --> DB[(SQLite adapter)]
   Workflow --> DB
+  Evidence --> DB
   Matter --> Files[Private file storage]
 ```
 
@@ -135,6 +159,7 @@ The boundaries are deliberately portable:
 - `src/server/intake/` owns enquiries, conflicts, readiness, onboarding and conversion;
 - `src/server/store.ts` owns tenant-scoped matter operations;
 - `src/server/workflow/` owns workflow definitions, working-day calculations, transitions, deadlines, and Matter 360 orchestration;
+- `src/server/evidence/` owns structured defects, notice/access history, immutable evidence links, readiness, risks and its HTTP boundary;
 - `src/server/storage.ts` owns immutable bytes and hashes;
 - `src/server/migrations/` owns ordered schema evolution;
 - `src/server/app.ts` maps HTTP requests to those boundaries;
@@ -148,7 +173,7 @@ The server never accepts a firm identifier from the browser. It resolves the fir
 
 Administrative and partner roles can read and write every matter and enquiry in their firm. Solicitors and paralegals need assignment, ownership or explicit membership. Conflict decisions, intake outcomes, overrides and conversion have distinct capability checks. Finance and read-only roles can read firm matters but cannot access claimant intake or mutate records. Inaccessible matters, enquiries and child resources return the same generic `404`, including resources in another firm, to avoid existence disclosure.
 
-Every tenant-owned table carries `firm_id`. Composite foreign keys prevent a child record from crossing a firm boundary. Audit and document-version rows have database triggers that reject updates and deletion. Uploaded names never become storage paths; files receive random storage keys and an SHA-256 digest.
+Every tenant-owned table carries `firm_id`. Composite foreign keys prevent a child record from crossing a firm boundary. Audit, document-version, notice, access, evidence and evidence-link rows have database triggers that reject updates and deletion. Defect current state uses optimistic versions while every status change is retained separately. Uploaded names never become storage paths; files receive random storage keys and an SHA-256 digest.
 
 Security acceptance tests live in:
 
@@ -193,6 +218,12 @@ The approved Step 1 design and implementation plan are in `docs/superpowers/`.
 | `GET` | `/api/matters/:id` | Full authorised matter aggregate |
 | `GET` | `/api/matters/:id/summary` | Matter 360 workflow, deadlines, alerts, and next actions |
 | `GET` | `/api/matters/:id/intake-profile` | Converted client, household, property and tenancy profile |
+| `GET` | `/api/matters/:matterId/evidence-investigation` | Defects, notice/access history, evidence, readiness, risks and permissions |
+| `POST` | `/api/matters/:matterId/defects` | Record a structured defect |
+| `PATCH` | `/api/matters/:matterId/defects/:defectId` | Version-controlled defect update and status history |
+| `POST` | `/api/matters/:matterId/notices` | Record an append-only notice or correction |
+| `POST` | `/api/matters/:matterId/access-events` | Record an append-only access event or correction |
+| `POST` | `/api/matters/:matterId/evidence-items` | Atomically link an exact document version to investigation facts |
 | `POST` | `/api/matters/:id/workflow/transitions` | Progress a workflow with readiness and version controls |
 | `POST` | `/api/matters/:id/workflow/triggers` | Confirm a legal event and calculate its governed deadline |
 | `POST` | `/api/matters/:id/parties` | Add a matter party |
@@ -226,8 +257,8 @@ Before a live pilot, replace the evaluation adapters with managed PostgreSQL and
 
 ## Next build
 
-The next case-management slice is **Defects, Notice and Evidence** for claimant Housing Conditions work: structured room-by-room defect schedules, hazards and severity, repair-report chronology, landlord notice evidence, access attempts, photographs and media, medical links, evidence provenance, disclosure gaps, Letter of Claim data and controlled document generation.
+The next case-management slice is **Protocol & Experts** for claimant Housing Conditions work: a controlled Letter of Claim data model and generation flow, service/receipt evidence, landlord response capture, expert instruction, conflict and availability checks, inspection access, report milestones, clarification questions and governed deadline status changes.
 
-That is followed by correspondence and communication capture, expert instruction and inspection control, repairs and quantum, offers and settlement authority, proceedings, costs and billing, closure, reporting, integrations, then supervised AI assistance across each governed source record. Calling and messaging integrations must preserve consent, identity, recording notices, retention, audit and human-review controls.
+That is followed by correspondence and communication capture, repairs and quantum, offers and settlement authority, proceedings, costs and billing, closure, reporting, integrations, then supervised AI assistance across each governed source record. Calling and messaging integrations must preserve consent, identity, recording notices, retention, audit and human-review controls.
 
 SwiftBridge is deliberately deferred until the operational case-management model is sufficiently complete to receive Proclaim data without flattening or losing it. The current external identifiers, import-batch fields, file hashes, audit model, and integration outbox preserve the migration seam. When SwiftBridge begins, its first deliverable should be an anonymised discovery and dry-run import with source inventory, mappings, document manifest, reconciliation totals, and an exception queue before any live cutover.
