@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createDatabase, seedDatabase, SEED_IDS } from '../database.js';
+import type { EvidenceReadinessProvider } from '../evidence/service.js';
 import type { SessionUser } from '../policy.js';
 import { MatterStore } from '../store.js';
 import { WorkflowError, WorkflowService } from './service.js';
@@ -37,6 +38,7 @@ describe('WorkflowService', () => {
   let database: DatabaseSync;
   let workflowStore: WorkflowStore;
   let service: WorkflowService;
+  let eligibleEvidenceControls: Set<string>;
 
   beforeEach(() => {
     database = createDatabase(':memory:');
@@ -72,10 +74,33 @@ describe('WorkflowService', () => {
         FIXED_NOW.toISOString(),
       );
     workflowStore = new WorkflowStore(database, () => FIXED_NOW);
+    eligibleEvidenceControls = new Set();
+    const evidenceReadiness: EvidenceReadinessProvider = {
+      getEvidenceReadiness: () => ({
+        controls: [
+          {
+            key: 'defect_schedule_recorded',
+            eligible: eligibleEvidenceControls.has('defect_schedule_recorded'),
+            explanation: 'Record at least one active defect.',
+          },
+          {
+            key: 'notice_evidence_recorded',
+            eligible: eligibleEvidenceControls.has('notice_evidence_recorded'),
+            explanation: 'Record an explicit proof position for a notice.',
+          },
+          {
+            key: 'photographs_recorded',
+            eligible: eligibleEvidenceControls.has('photographs_recorded'),
+            explanation: 'Link a preserved photograph to an active defect.',
+          },
+        ],
+      }),
+    };
     service = new WorkflowService(
       new MatterStore(database, () => FIXED_NOW),
       workflowStore,
       () => FIXED_NOW,
+      evidenceReadiness,
     );
     workflowStore.instantiateMatterWorkflow(
       SEED_IDS.northstarFirm,
@@ -86,6 +111,126 @@ describe('WorkflowService', () => {
 
   afterEach(() => {
     database.close();
+  });
+
+  function advanceToEvidence() {
+    const transitions = [
+      {
+        toStageKey: 'assessment',
+        expectedVersion: 1,
+        completedChecklistKeys: [
+          'initial_contact_recorded',
+          'conflict_check_completed',
+        ],
+        reason: 'Initial enquiry is complete and suitable for assessment.',
+      },
+      {
+        toStageKey: 'onboarding',
+        expectedVersion: 2,
+        completedChecklistKeys: [
+          'tenancy_confirmed',
+          'landlord_duty_screened',
+          'limitation_reviewed',
+          'merits_decision_recorded',
+        ],
+        reason: 'The legal assessment is complete and approved to proceed.',
+      },
+      {
+        toStageKey: 'evidence',
+        expectedVersion: 3,
+        completedChecklistKeys: [
+          'client_care_signed',
+          'authority_signed',
+          'id_checks_completed',
+          'funding_recorded',
+        ],
+        reason: 'The client onboarding controls are complete and recorded.',
+      },
+    ];
+    for (const transition of transitions) {
+      service.transitionStage(
+        ava,
+        TEST_MATTER_ID,
+        transition,
+        AUDIT_CONTEXT,
+      );
+    }
+  }
+
+  it('blocks unsupported evidence readiness confirmations and accepts supported ones', () => {
+    advanceToEvidence();
+    eligibleEvidenceControls = new Set([
+      'defect_schedule_recorded',
+      'notice_evidence_recorded',
+    ]);
+    const command = {
+      toStageKey: 'protocol',
+      expectedVersion: 4,
+      completedChecklistKeys: [
+        'defect_schedule_recorded',
+        'notice_evidence_recorded',
+        'photographs_recorded',
+      ],
+      reason: 'The evidence investigation is complete for protocol review.',
+    };
+
+    expect(() =>
+      service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT),
+    ).toThrowError(
+      expect.objectContaining<Partial<WorkflowError>>({
+        code: 'READINESS_BLOCKED',
+        details: {
+          blockers: expect.arrayContaining([
+            expect.objectContaining({ key: 'photographs_recorded' }),
+          ]),
+        },
+      }),
+    );
+
+    eligibleEvidenceControls.add('photographs_recorded');
+    expect(
+      service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT)
+        .workflow.currentStageKey,
+    ).toBe('protocol');
+  });
+
+  it('retains a partner override for objective evidence readiness blockers', () => {
+    advanceToEvidence();
+    const result = service.transitionStage(
+      partner,
+      TEST_MATTER_ID,
+      {
+        toStageKey: 'protocol',
+        expectedVersion: 4,
+        completedChecklistKeys: [
+          'defect_schedule_recorded',
+          'notice_evidence_recorded',
+          'photographs_recorded',
+        ],
+        reason: 'Urgent protocol progression has been reviewed by the supervisor.',
+        overrideReason:
+          'Supervisor approved progression while the missing records are obtained.',
+      },
+      AUDIT_CONTEXT,
+    );
+
+    expect(result.workflow.currentStageKey).toBe('protocol');
+    const auditRow = database
+      .prepare(
+        `SELECT after_json AS afterJson FROM audit_events
+         WHERE action = 'workflow.stage_changed' AND matter_id = ?
+         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(TEST_MATTER_ID) as { afterJson: string };
+    expect(JSON.parse(auditRow.afterJson)).toMatchObject({
+      overrideReason:
+        'Supervisor approved progression while the missing records are obtained.',
+      blockers: expect.arrayContaining([
+        expect.objectContaining({ key: 'defect_schedule_recorded' }),
+        expect.objectContaining({ key: 'notice_evidence_recorded' }),
+        expect.objectContaining({ key: 'photographs_recorded' }),
+      ]),
+    });
   });
 
   it('returns stages, readiness blockers and explainable critical deadlines', () => {

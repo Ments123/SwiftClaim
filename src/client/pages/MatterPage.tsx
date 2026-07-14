@@ -23,12 +23,15 @@ import {
   request,
   type Matter360Data,
   type MatterAggregate,
+  type EvidenceWorkspace,
   type MatterIntakeProfile,
   type MatterSection,
   type TransitionWorkflowCommand,
 } from '../api.js';
 import { Dialog } from '../components/Dialog.js';
 import { ClientHouseholdPanel } from '../components/matter/ClientHouseholdPanel.js';
+import { DefectsRepairsPanel } from '../components/matter/DefectsRepairsPanel.js';
+import { EvidenceInvestigationPanel } from '../components/matter/EvidenceInvestigationPanel.js';
 import { MatterHeader } from '../components/matter/MatterHeader.js';
 import { MatterSectionRail } from '../components/matter/MatterSectionRail.js';
 import { OperationalOverview } from '../components/matter/OperationalOverview.js';
@@ -63,6 +66,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [profileRetryVersion, setProfileRetryVersion] = useState(0);
+  const [evidenceWorkspace, setEvidenceWorkspace] = useState<EvidenceWorkspace>();
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState('');
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
@@ -116,6 +122,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setProfileLoading(false);
     setProfileError('');
     setProfileRetryVersion(0);
+    setEvidenceWorkspace(undefined);
+    setEvidenceLoading(false);
+    setEvidenceError('');
     setMutationError('');
     setSection('overview');
     void loadAll(controller.signal);
@@ -154,6 +163,38 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setProfileError('');
     setProfileRetryVersion((version) => version + 1);
   };
+
+  const evidenceSectionActive =
+    section === 'defects_repairs' || section === 'evidence';
+
+  const loadEvidenceWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setEvidenceLoading(true);
+    setEvidenceError('');
+    try {
+      setEvidenceWorkspace(
+        await request<EvidenceWorkspace>(
+          `/api/matters/${matterId}/evidence-investigation`,
+          { signal },
+        ),
+      );
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setEvidenceError(
+        reason instanceof Error
+          ? reason.message
+          : 'The evidence investigation is unavailable.',
+      );
+    } finally {
+      if (!signal?.aborted) setEvidenceLoading(false);
+    }
+  }, [matterId]);
+
+  useEffect(() => {
+    if (!evidenceSectionActive || evidenceWorkspace || evidenceError) return;
+    const controller = new AbortController();
+    void loadEvidenceWorkspace(controller.signal);
+    return () => controller.abort();
+  }, [evidenceError, evidenceSectionActive, evidenceWorkspace, loadEvidenceWorkspace]);
 
   const completeTask = async (taskId: string) => {
     setUpdatingTask(taskId);
@@ -206,6 +247,8 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         tasks_calendar: openTasks.length,
         chronology: aggregate.timeline.length,
         audit: aggregate.audit.length,
+        defects_repairs: evidenceWorkspace?.defects.length,
+        evidence: evidenceWorkspace?.evidenceItems.length,
       }
     : { tasks_calendar: summary.nextActions.length };
 
@@ -265,6 +308,39 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
           loading={profileLoading}
           error={profileError}
           onRetry={retryProfile}
+        />
+      ) : null}
+
+      {evidenceSectionActive && evidenceLoading && !evidenceWorkspace ? (
+        <section className="surface tab-surface" aria-busy="true">
+          <div className="skeleton skeleton--heading" />
+          <div className="skeleton skeleton--matter" />
+        </section>
+      ) : null}
+
+      {evidenceSectionActive && evidenceError && !evidenceWorkspace ? (
+        <section className="surface tab-surface page-state">
+          <ShieldCheck size={30} />
+          <h2>Evidence investigation unavailable</h2>
+          <p>{evidenceError}</p>
+          <button className="button button--secondary" type="button" onClick={() => void loadEvidenceWorkspace()}><RefreshCw size={15} /> Retry</button>
+        </section>
+      ) : null}
+
+      {section === 'defects_repairs' && evidenceWorkspace ? (
+        <DefectsRepairsPanel
+          matterId={matterId}
+          workspace={evidenceWorkspace}
+          onRefresh={() => loadEvidenceWorkspace()}
+        />
+      ) : null}
+
+      {section === 'evidence' && evidenceWorkspace ? (
+        <EvidenceInvestigationPanel
+          matterId={matterId}
+          workspace={evidenceWorkspace}
+          onRefresh={() => loadEvidenceWorkspace()}
+          onNavigateDocuments={() => setSection('documents')}
         />
       ) : null}
 
