@@ -4,6 +4,7 @@ import { secureMatterSpineMigration } from './001-secure-matter-spine.js';
 import { workflowFoundationMigration } from './002-workflow-foundation.js';
 import { intakeOnboardingMigration } from './003-intake-onboarding.js';
 import { defectsNoticeEvidenceMigration } from './004-defects-notice-evidence.js';
+import { protocolExpertsMigration } from './005-protocol-experts.js';
 import type { Migration } from './types.js';
 
 export const migrations: Migration[] = [
@@ -11,6 +12,7 @@ export const migrations: Migration[] = [
   workflowFoundationMigration,
   intakeOnboardingMigration,
   defectsNoticeEvidenceMigration,
+  protocolExpertsMigration,
 ];
 
 export function runMigrations(

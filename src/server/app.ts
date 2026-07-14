@@ -31,6 +31,9 @@ import { intakeRoutes } from './intake/routes.js';
 import { IntakeService } from './intake/service.js';
 import { IntakeStore } from './intake/store.js';
 import { canCreateMatter, hasCapability, type SessionUser } from './policy.js';
+import { protocolRoutes } from './protocol/routes.js';
+import { ProtocolService } from './protocol/service.js';
+import { ProtocolStore } from './protocol/store.js';
 import {
   createSessionToken,
   hashPassword,
@@ -108,6 +111,10 @@ function publicUser(user: SessionUser) {
       canDecideIntake: hasCapability(user, 'intake.decide'),
       canOverrideConflict: hasCapability(user, 'intake.override_conflict'),
       canConvertIntake: hasCapability(user, 'intake.convert'),
+      canPrepareProtocol: hasCapability(user, 'protocol.prepare'),
+      canApproveProtocol: hasCapability(user, 'protocol.approve'),
+      canOverrideExpertConflict: hasCapability(user, 'protocol.override_conflict'),
+      canReviewExpertReport: hasCapability(user, 'protocol.review_report'),
     },
   };
 }
@@ -126,11 +133,19 @@ export async function buildApp(
   const workflowStore = new WorkflowStore(database, now);
   const evidenceStore = new EvidenceStore(database);
   const evidenceService = new EvidenceService(evidenceStore, now);
+  const protocolStore = new ProtocolStore(database, now, workflowStore);
+  const protocolService = new ProtocolService(
+    database,
+    protocolStore,
+    options.storagePath,
+    now,
+  );
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
     now,
     evidenceService,
+    protocolService,
   );
   const intakeStore = new IntakeStore(database, now);
   const intakeService = new IntakeService(
@@ -521,6 +536,17 @@ export async function buildApp(
 
   await app.register(evidenceRoutes, {
     service: evidenceService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(protocolRoutes, {
+    service: protocolService,
+    store: protocolStore,
+    storagePath: options.storagePath,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,

@@ -4,6 +4,8 @@ import type { BusinessCalendar, WorkflowDefinition } from './types.js';
 
 const PROTOCOL_URL =
   'https://www.justice.gov.uk/courts/procedure-rules/civil/protocol/prot_hou';
+const CPR_35_URL =
+  'https://www.justice.gov.uk/courts/procedure-rules/civil/rules/part35';
 const BANK_HOLIDAYS_URL = 'https://www.gov.uk/bank-holidays';
 
 export const WORKFLOW_IDS = {
@@ -13,6 +15,8 @@ export const WORKFLOW_IDS = {
   landlordResponseRule: '74000000-0000-4000-8000-000000000001',
   expertInspectionRule: '74000000-0000-4000-8000-000000000002',
   expertReportRule: '74000000-0000-4000-8000-000000000003',
+  substantiveResponseRule: '74000000-0000-4000-8000-000000000004',
+  clarificationQuestionsRule: '74000000-0000-4000-8000-000000000005',
 } as const;
 
 const STAGE_IDS = [
@@ -209,6 +213,35 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
       sourceTitle:
         'Pre-Action Protocol for Housing Conditions Claims (England), paragraph 7.4(b)',
       sourceUrl: PROTOCOL_URL,
+      effectiveFrom: '2026-01-01',
+      effectiveTo: null,
+    },
+    {
+      id: WORKFLOW_IDS.substantiveResponseRule,
+      key: 'housing.protocol.substantive_response',
+      version: 1,
+      name: 'Substantive response after expert report',
+      triggerEventType: 'expert.report.received',
+      offset: 20,
+      unit: 'working_days',
+      direction: 'after',
+      sourceTitle:
+        'Pre-Action Protocol for Housing Conditions Claims (England), paragraph 7.5',
+      sourceUrl: PROTOCOL_URL,
+      effectiveFrom: '2026-01-01',
+      effectiveTo: null,
+    },
+    {
+      id: WORKFLOW_IDS.clarificationQuestionsRule,
+      key: 'housing.expert.clarification_questions',
+      version: 1,
+      name: 'Written questions to expert under CPR 35.6',
+      triggerEventType: 'expert.report.served_cpr35',
+      offset: 28,
+      unit: 'calendar_days',
+      direction: 'after',
+      sourceTitle: 'Civil Procedure Rules, Part 35.6',
+      sourceUrl: CPR_35_URL,
       effectiveFrom: '2026-01-01',
       effectiveTo: null,
     },

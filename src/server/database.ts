@@ -5,6 +5,8 @@ import { IntakeConflictService } from './intake/conflicts.js';
 import { IntakeService } from './intake/service.js';
 import { IntakeStore } from './intake/store.js';
 import type { SessionUser } from './policy.js';
+import { ProtocolService } from './protocol/service.js';
+import { ProtocolStore } from './protocol/store.js';
 import { hashPassword } from './security.js';
 import { MatterStore } from './store.js';
 import { seedWorkflowDefinitions } from './workflow/definitions.js';
@@ -1429,9 +1431,8 @@ function seedHousingWorkflowMatter(database: DatabaseSync): void {
         'defect_schedule_recorded',
         'notice_evidence_recorded',
         'photographs_recorded',
-        'letter_of_claim_sent',
       ],
-      reason: 'Defect and notice evidence reviewed and the Letter of Claim sent.',
+      reason: 'Defect, notice and photograph evidence reviewed for protocol preparation.',
     },
   ] as const;
 
@@ -1466,18 +1467,234 @@ function seedHousingWorkflowMatter(database: DatabaseSync): void {
       },
     );
   }
+}
 
-  service.confirmTrigger(
-    user,
-    SEED_IDS.northstarMatter,
+export async function seedProtocolExpertsEvaluation(
+  database: DatabaseSync,
+  storagePath: string,
+): Promise<void> {
+  const now = () => new Date('2026-08-20T09:00:00.000Z');
+  const user: SessionUser = {
+    id: SEED_IDS.ava,
+    firmId: SEED_IDS.northstarFirm,
+    firmName: 'Northstar Legal',
+    email: 'ava@northstar.test',
+    name: 'Ava Morgan',
+    role: 'solicitor',
+  };
+  const audit = {
+    requestId: 'seed-protocol-experts-evaluation',
+    ipAddress: '127.0.0.1',
+  };
+  const workflowStore = new WorkflowStore(database, now);
+  const store = new ProtocolStore(database, now, workflowStore);
+  const service = new ProtocolService(database, store, storagePath, now);
+  let workspace = service.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (!workspace) throw new Error('The Maya evaluation matter is unavailable');
+
+  if (workspace.letterVersions.length === 0) {
+    if (workspace.letter.state !== 'ready_for_review') {
+      service.saveLetter(user, SEED_IDS.northstarMatter, {
+        expectedVersion: workspace.letter.version,
+        claimantAddress: '18 Alder Court, Salford, M5 4QJ',
+        landlordRecipient: 'Meridian Housing Association',
+        landlordAddress: '1 Meridian Square, Manchester, M1 1AA',
+        effectNarrative:
+          'Maya records that the main bedroom cannot be used safely and that recurring cold, damp and mould affect the household, including a child with asthma.',
+        personalInjuryStatus: 'minor_gp_evidence',
+        personalInjurySummary:
+          'A GP attendance concerning asthma symptoms is recorded for solicitor review; no medical causation conclusion is made.',
+        specialDamagesStatus: 'under_review',
+        specialDamagesSummary: 'Damaged belongings and additional heating costs remain under review.',
+        accessWindows: [
+          { date: '2026-07-20', from: '10:00', to: '13:00', notes: 'Synthetic evaluation appointment.' },
+        ],
+        expertProposalSummary: 'A single joint building surveyor is proposed.',
+        disclosureRequests: [
+          'Complete tenancy and complaint file',
+          'Inspection, repair order and completion records',
+          'Communal elevation and water-ingress records',
+        ],
+        additionalContent: 'All professional and contact details in this evaluation matter are fictional.',
+        state: 'ready_for_review',
+      }, audit);
+      workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+    }
+    await service.approveLetter(user, SEED_IDS.northstarMatter, {
+      expectedVersion: workspace.letter.version,
+      idempotencyKey: 'seed-protocol-letter-approval-v1',
+    }, audit);
+    workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  }
+
+  const letterVersionId = workspace.letterVersions[0]!.id;
+  if (!workspace.serviceEvents.some(({ eventType }) => eventType === 'dispatched')) {
+    service.recordServiceEvent(user, SEED_IDS.northstarMatter, {
+      idempotencyKey: 'seed-protocol-letter-dispatched',
+      letterVersionId,
+      eventType: 'dispatched',
+      method: 'email',
+      occurredAt: '2026-07-14T09:30:00.000Z',
+      legalTriggerOn: null,
+      recipient: 'Meridian Housing Association',
+      destination: 'fictional-protocol-inbox@example.test',
+      sourceDetail: 'Synthetic evaluation dispatch recorded from the reviewed outgoing email.',
+      supportingDocumentVersionId: null,
+      supersedesEventId: null,
+      correctionReason: '',
+    }, audit);
+  }
+  workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  if (!workspace.serviceEvents.some(({ eventType }) => eventType === 'actual_receipt')) {
+    service.recordServiceEvent(user, SEED_IDS.northstarMatter, {
+      idempotencyKey: 'seed-protocol-letter-received',
+      letterVersionId,
+      eventType: 'actual_receipt',
+      method: 'email',
+      occurredAt: '2026-07-14T10:10:00.000Z',
+      legalTriggerOn: '2026-07-14',
+      recipient: 'Meridian Housing Association',
+      destination: 'fictional-protocol-inbox@example.test',
+      sourceDetail: 'Synthetic landlord acknowledgement confirms receipt on 14 July 2026.',
+      supportingDocumentVersionId: null,
+      supersedesEventId: null,
+      correctionReason: '',
+    }, audit);
+  }
+  workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  if (workspace.landlordResponses.length === 0) {
+    service.recordLandlordResponse(user, SEED_IDS.northstarMatter, {
+      idempotencyKey: 'seed-landlord-response-initial',
+      responseType: 'initial',
+      receivedOn: '2026-07-16',
+      respondingParty: 'Meridian Housing Association',
+      contactName: 'Synthetic Repairs Team',
+      generalLiabilityPosition: 'partly_admitted',
+      liabilityReasons: 'The extractor and heating issues are partly admitted; causation of the remaining conditions is reserved.',
+      noticePosition: 'The November email and later chasers are acknowledged.',
+      accessPosition: 'Access is requested for a joint inspection.',
+      disclosureStatus: 'partial',
+      disclosureSummary: 'Repair orders are supplied; complaint logs and communal ingress records remain missing.',
+      expertProposalPosition: 'agreed',
+      expertProposalSummary: 'A single joint building surveyor is agreed in principle.',
+      worksSchedule: 'Inspect the extractor, heating, bathroom leak and bedroom window.',
+      worksStartOn: '2026-07-22',
+      worksCompleteOn: null,
+      compensationOfferMinor: null,
+      costsOfferMinor: null,
+      currency: 'GBP',
+      sourceDocumentVersionId: SEED_IDS.complaintVersion,
+      supersedesResponseId: null,
+      correctionReason: '',
+      defectPositions: [
+        { defectId: SEED_IDS.bedroomDampDefect, position: 'partly_admitted', reason: 'Condition acknowledged; cause reserved.' },
+        { defectId: SEED_IDS.bathroomLeakDefect, position: 'admitted', reason: 'Repair attendance is proposed.' },
+        { defectId: SEED_IDS.kitchenVentDefect, position: 'admitted', reason: 'Extractor failure is accepted.' },
+        { defectId: SEED_IDS.heatingDefect, position: 'partly_admitted', reason: 'Intermittent failure is accepted subject to inspection.' },
+      ],
+    }, audit);
+  }
+  workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  if (workspace.case.expertRoute === 'undecided') {
+    service.selectExpertRoute(user, SEED_IDS.northstarMatter, {
+      expectedVersion: workspace.case.version,
+      route: 'proposed_single_joint',
+      reason: 'A proportionate independent inspection and schedule of works is required.',
+      urgentReason: '',
+    }, audit);
+  }
+  workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  let expert = workspace.experts[0];
+  if (!expert) {
+    expert = service.createExpertEngagement(user, SEED_IDS.northstarMatter, {
+      route: 'proposed_single_joint',
+      expertRole: 'building_surveyor',
+      expertName: 'Elena Ward',
+      organisation: 'Northfield Building Surveyors',
+      email: 'elena.ward@example.test',
+      phone: '',
+      expertise: 'Residential housing conditions, repair specifications and cost schedules.',
+      qualifications: 'Supplied as BSc MRICS; not independently verified by SwiftClaim.',
+      registrationBody: 'RICS',
+      registrationReference: 'SYNTHETIC-RICS-1042',
+      verificationStatus: 'unverified',
+      verificationMethod: '',
+      verifiedOn: null,
+      proposedBy: 'jointly',
+      singleJoint: true,
+      termsStatus: 'accepted',
+      feeBasis: 'Synthetic fixed fee for inspection, report and schedule of works.',
+      feeMinor: 90000,
+      currency: 'GBP',
+      payerSplit: { claimantPercent: 50, landlordPercent: 50 },
+      availabilitySummary: 'Synthetic inspection availability confirmed for 20 July 2026.',
+      targetReportOn: '2026-08-03',
+    }, audit);
+  }
+  if (expert.conflictChecks.length === 0) {
+    service.recordExpertConflictCheck(user, SEED_IDS.northstarMatter, expert.id, {
+      idempotencyKey: 'seed-expert-conflict-clear',
+      partiesChecked: ['Maya Clarke', 'Meridian Housing Association'],
+      method: 'Synthetic written declaration and supplied conflict search.',
+      searchDetail: 'The fictional expert records no conflict against the supplied parties.',
+      outcome: 'clear',
+      decision: 'clear_to_proceed',
+      reason: 'The named solicitor reviewed the synthetic declaration and approved progression.',
+    }, audit);
+  }
+  workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  expert = workspace.experts[0]!;
+  if (expert.instructionVersions.length === 0) {
+    await service.approveExpertInstruction(user, SEED_IDS.northstarMatter, expert.id, {
+      expectedVersion: expert.version,
+      idempotencyKey: 'seed-expert-instruction-v1',
+      issues: ['Identify and describe all adverse housing conditions at the property.'],
+      questions: [
+        'Set out required works, urgency, reasonable duration and estimated cost.',
+        'State whether any condition presents an immediate health or safety concern.',
+      ],
+      accessDetail: 'Synthetic access appointment: 20 July 2026 from 10:00 to 13:00.',
+      urgentWorksRequested: true,
+      scheduleOfWorksRequested: true,
+      costEstimateRequested: true,
+      reportDueOn: '2026-08-03',
+    }, audit);
+  }
+  workspace = service.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  expert = workspace.experts[0]!;
+  const instructionVersionId = expert.instructionVersions[0]!.id;
+  const milestones = [
     {
-      eventType: 'letter_of_claim.received',
-      occurredOn: '2026-07-14',
-      idempotencyKey: 'seed-letter-of-claim-received-2026-07-14',
+      idempotencyKey: 'seed-instruction-dispatched',
+      eventType: 'instruction_dispatched' as const,
+      occurredAt: '2026-07-17T09:00:00.000Z',
+      legalTriggerOn: null,
+      detail: 'The approved synthetic instruction was dispatched to the fictional expert.',
     },
     {
-      requestId: 'seed-workflow-letter-of-claim-received',
-      ipAddress: '127.0.0.1',
+      idempotencyKey: 'seed-inspection-booked',
+      eventType: 'inspection_booked' as const,
+      occurredAt: '2026-07-17T10:00:00.000Z',
+      legalTriggerOn: null,
+      detail: 'Inspection booked for 20 July 2026 at 10:00.',
     },
-  );
+    {
+      idempotencyKey: 'seed-inspection-completed',
+      eventType: 'inspection_completed' as const,
+      occurredAt: '2026-07-20T12:00:00.000Z',
+      legalTriggerOn: '2026-07-20',
+      detail: 'The fictional expert completed the synthetic property inspection.',
+    },
+  ];
+  for (const milestone of milestones) {
+    if (expert.milestones.some(({ eventType }) => eventType === milestone.eventType)) continue;
+    service.recordExpertMilestone(user, SEED_IDS.northstarMatter, expert.id, {
+      ...milestone,
+      instructionVersionId,
+      supportingDocumentVersionId: null,
+      supersedesEventId: null,
+      correctionReason: '',
+    }, audit);
+    expert = service.getWorkspace(user, SEED_IDS.northstarMatter)!.experts[0]!;
+  }
 }

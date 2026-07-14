@@ -23,6 +23,10 @@ const userFixture = {
     canDecideIntake: true,
     canOverrideConflict: false,
     canConvertIntake: true,
+    canPrepareProtocol: true,
+    canApproveProtocol: true,
+    canOverrideExpertConflict: false,
+    canReviewExpertReport: true,
   },
 };
 

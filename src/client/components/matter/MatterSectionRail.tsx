@@ -61,7 +61,7 @@ const SECTION_ITEMS: ReadonlyArray<{
     id: 'protocol_experts',
     label: 'Protocol & experts',
     icon: Scale,
-    available: false,
+    available: true,
   },
   {
     id: 'damages_offers',

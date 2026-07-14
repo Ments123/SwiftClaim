@@ -2,7 +2,11 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { buildApp } from './app.js';
-import { createDatabase, seedDatabase } from './database.js';
+import {
+  createDatabase,
+  seedDatabase,
+  seedProtocolExpertsEvaluation,
+} from './database.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number.parseInt(process.env.PORT ?? '4100', 10);
@@ -28,7 +32,10 @@ const database = createDatabase(databasePath);
 const shouldSeed = process.env.SEED_DEMO_DATA
   ? process.env.SEED_DEMO_DATA === 'true'
   : !isProduction;
-if (shouldSeed) seedDatabase(database);
+if (shouldSeed) {
+  seedDatabase(database);
+  await seedProtocolExpertsEvaluation(database, storagePath);
+}
 
 const app = await buildApp({
   database,

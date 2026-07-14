@@ -34,4 +34,16 @@ describe('role capabilities', () => {
     expect(hasCapability(user('finance'), 'intake.read')).toBe(false);
     expect(hasCapability(user('readonly'), 'intake.read')).toBe(false);
   });
+
+  it('separates protocol preparation, approval and privileged conflict decisions', () => {
+    expect(hasCapability(user('paralegal'), 'protocol.prepare')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'protocol.approve')).toBe(false);
+    expect(hasCapability(user('solicitor'), 'protocol.prepare')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'protocol.approve')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'protocol.review_report')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'protocol.override_conflict')).toBe(false);
+    expect(hasCapability(user('partner'), 'protocol.override_conflict')).toBe(true);
+    expect(hasCapability(user('finance'), 'protocol.prepare')).toBe(false);
+    expect(hasCapability(user('readonly'), 'protocol.review_report')).toBe(false);
+  });
 });

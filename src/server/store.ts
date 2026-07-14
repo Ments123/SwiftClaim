@@ -960,6 +960,35 @@ export class MatterStore {
     };
   }
 
+  getDocumentFileByVersion(
+    firmId: string,
+    matterId: string,
+    versionId: string,
+  ) {
+    const row = asRow(
+      this.database
+        .prepare(
+          `SELECT dv.storage_key AS storageKey, dv.original_name AS originalName,
+            dv.mime_type AS mimeType, dv.size_bytes AS sizeBytes,
+            dv.sha256, dv.version
+          FROM documents d
+          JOIN document_versions dv
+            ON dv.document_id = d.id AND dv.firm_id = d.firm_id
+          WHERE dv.id = ? AND d.matter_id = ? AND d.firm_id = ?`,
+        )
+        .get(versionId, matterId, firmId),
+    );
+    if (!row) return undefined;
+    return {
+      storageKey: String(row.storageKey),
+      originalName: String(row.originalName),
+      mimeType: String(row.mimeType),
+      sizeBytes: Number(row.sizeBytes),
+      sha256: String(row.sha256),
+      version: Number(row.version),
+    };
+  }
+
   getDashboard(user: SessionUser) {
     const matters = this.listMatters(user);
     const matterIds = new Set(matters.map((matter) => matter.id));

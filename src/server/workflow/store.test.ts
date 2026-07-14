@@ -214,6 +214,48 @@ describe('WorkflowStore', () => {
     ).toThrow('Idempotency key has already been used for different trigger data');
   });
 
+  it('varies a deadline by immutable supersession and replaces its reminder', () => {
+    store.instantiateMatterWorkflow(
+      SEED_IDS.northstarFirm,
+      TEST_MATTER_ID,
+      TEST_ACTOR_ID,
+    );
+    const original = store.recordTriggerAndDeadline({
+      firmId: SEED_IDS.northstarFirm,
+      matterId: TEST_MATTER_ID,
+      actorUserId: TEST_ACTOR_ID,
+      triggerEventType: 'letter_of_claim.received',
+      triggerDate: '2026-08-03',
+      idempotencyKey: 'loc-received-to-vary',
+      auditContext: { requestId: 'request-original', ipAddress: '127.0.0.1' },
+    });
+
+    const varied = store.varyDeadline({
+      firmId: SEED_IDS.northstarFirm,
+      matterId: TEST_MATTER_ID,
+      actorUserId: TEST_ACTOR_ID,
+      deadlineId: original.deadline.id,
+      agreedOn: '2026-08-20',
+      dueOn: '2026-09-15',
+      reason: 'The parties agreed a short extension for complete repair disclosure.',
+      idempotencyKey: 'vary-landlord-response-001',
+      auditContext: { requestId: 'request-variation', ipAddress: '127.0.0.1' },
+    });
+
+    expect(varied.deadline).toMatchObject({ dueDate: '2026-09-15', status: 'pending' });
+    expect(store.listMatterDeadlines(SEED_IDS.northstarFirm, TEST_MATTER_ID))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: original.deadline.id, status: 'superseded' }),
+        expect.objectContaining({ id: varied.deadline.id, dueDate: '2026-09-15' }),
+      ]));
+    expect(database.prepare('SELECT supersedes_deadline_id AS prior FROM matter_deadlines WHERE id = ?')
+      .get(varied.deadline.id)).toEqual({ prior: original.deadline.id });
+    expect(database.prepare('SELECT status FROM tasks WHERE id = ?').get(original.task.id))
+      .toEqual({ status: 'cancelled' });
+    expect(database.prepare('SELECT status FROM tasks WHERE id = ?').get(varied.task.id))
+      .toEqual({ status: 'open' });
+  });
+
   it('does not expose deadlines across firms', () => {
     store.instantiateMatterWorkflow(
       SEED_IDS.northstarFirm,

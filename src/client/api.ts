@@ -15,6 +15,10 @@ export interface CurrentUser {
     canDecideIntake: boolean;
     canOverrideConflict: boolean;
     canConvertIntake: boolean;
+    canPrepareProtocol: boolean;
+    canApproveProtocol: boolean;
+    canOverrideExpertConflict: boolean;
+    canReviewExpertReport: boolean;
   };
 }
 
@@ -513,6 +517,168 @@ export interface EvidenceWorkspace {
     detail: string;
     entityId: string | null;
   }>;
+}
+
+export interface ProtocolGeneratedDocumentVersion {
+  documentId: string;
+  id: string;
+  version: number;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+}
+
+export interface ProtocolWorkspace {
+  matterId: string;
+  case: {
+    id: string;
+    version: number;
+    protocolStatus: string;
+    expertRoute: string;
+    expertRouteReason: string;
+    urgentReason: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  letter: {
+    id: string;
+    version: number;
+    state: string;
+    draft: Record<string, unknown>;
+    source: {
+      model: {
+        matterReference?: string;
+        defects: Array<{
+          id: string;
+          location: string;
+          title: string;
+          description?: string;
+          status?: string;
+          severity?: string;
+        }>;
+        notices?: Array<{ id: string; occurredAt: string; channel: string; summary: string }>;
+        access?: Array<{ id: string; eventType: string; appointmentAt: string | null; notes: string }>;
+        effectNarrative?: string;
+        disclosureRequests?: string[];
+      };
+      blockers: Array<{ key: string; label: string; sourceType?: string }>;
+      warnings: Array<{ key: string; label: string; sourceType?: string }>;
+    };
+    authorUserId: string;
+    reviewerUserId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  letterVersions: Array<{
+    id: string;
+    version: number;
+    model: Record<string, unknown>;
+    sourceManifest: Record<string, unknown>;
+    templateKey: string;
+    rendererVersion: string;
+    contentSha256: string;
+    documentVersion: ProtocolGeneratedDocumentVersion;
+    approvedBy: string;
+    approvedAt: string;
+    sourceFreshness: { fresh: boolean; added: string[]; changed: string[]; removed: string[] };
+  }>;
+  serviceEvents: Array<{
+    id: string;
+    letterVersionId: string;
+    eventType: string;
+    method: string;
+    occurredAt: string;
+    legalTriggerOn: string | null;
+    recipient: string;
+    destination: string;
+    sourceDetail: string;
+    supportingDocumentVersionId: string | null;
+    supersedesEventId: string | null;
+    correctionReason: string;
+    createdBy: string;
+    createdAt: string;
+  }>;
+  landlordResponses: Array<{
+    id: string;
+    responseType: string;
+    receivedOn: string | null;
+    respondingParty: string;
+    contactName: string;
+    generalLiabilityPosition: string;
+    liabilityReasons: string;
+    noticePosition: string;
+    accessPosition: string;
+    disclosureStatus: string;
+    disclosureSummary: string;
+    expertProposalPosition: string;
+    expertProposalSummary: string;
+    worksSchedule: string;
+    worksStartOn: string | null;
+    worksCompleteOn: string | null;
+    compensationOfferMinor: number | null;
+    costsOfferMinor: number | null;
+    currency: string;
+    sourceDocumentVersionId: string | null;
+    supersedesResponseId: string | null;
+    defectPositions: Array<{ defectId: string; position: string; reason: string }>;
+    createdBy: string;
+    createdAt: string;
+  }>;
+  experts: Array<{
+    id: string;
+    version: number;
+    route: string;
+    expertRole: string;
+    expertName: string;
+    organisation: string;
+    email: string;
+    phone: string;
+    expertise: string;
+    qualifications: string;
+    registrationBody: string;
+    registrationReference: string;
+    verificationStatus: string;
+    verificationMethod: string;
+    verifiedOn: string | null;
+    proposedBy: string;
+    singleJoint: boolean;
+    termsStatus: string;
+    feeBasis: string;
+    feeMinor: number | null;
+    currency: string;
+    payerSplit: { claimantPercent: number; landlordPercent: number };
+    availabilitySummary: string;
+    targetReportOn: string | null;
+    state: string;
+    conflictChecks: Array<{ id: string; outcome: string; decision: string; reason: string; [key: string]: unknown }>;
+    instructionVersions: Array<{ id: string; version: number; documentVersion: ProtocolGeneratedDocumentVersion; [key: string]: unknown }>;
+    milestones: Array<{ id: string; eventType: string; occurredAt: string; detail: string; [key: string]: unknown }>;
+    reports: Array<{ id: string; reportType: string; receivedOn: string; reviewed: boolean; documentVersion: ProtocolGeneratedDocumentVersion; [key: string]: unknown }>;
+    questions: Array<{ id: string; question: string; responseDueOn: string | null; answers: unknown[]; [key: string]: unknown }>;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  deadlines: MatterLegalDeadline[];
+  readiness: {
+    controls: Array<{ key: string; eligible: boolean; explanation: string }>;
+    progressionBlockers: MatterWorkflowBlocker[];
+  };
+  risks: Array<{
+    key: string;
+    type: string;
+    level: 'medium' | 'high' | 'critical';
+    title: string;
+    detail: string;
+    entityId: string | null;
+  }>;
+  permissions: {
+    canPrepare: boolean;
+    canApprove: boolean;
+    canOverrideConflict: boolean;
+    canReviewReport: boolean;
+  };
 }
 
 export type MatterSection =

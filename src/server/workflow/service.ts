@@ -29,6 +29,21 @@ export class WorkflowError extends Error {
   }
 }
 
+export interface ProtocolReadinessProvider {
+  getProtocolReadiness(
+    firmId: string,
+    matterId: string,
+    stageKey: 'protocol' | 'expert',
+  ): {
+    controls: Array<{
+      key: 'letter_of_claim_sent' | 'expert_instruction_confirmed';
+      eligible: boolean;
+      explanation: string;
+    }>;
+    progressionBlockers: WorkflowBlocker[];
+  };
+}
+
 function checklistLabel(key: string): string {
   const sentence = key.replaceAll('_', ' ');
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
@@ -52,6 +67,7 @@ export class WorkflowService {
     private readonly workflowStore: WorkflowStore,
     private readonly now: () => Date,
     private readonly evidenceReadiness?: EvidenceReadinessProvider,
+    private readonly protocolReadiness?: ProtocolReadinessProvider,
   ) {}
 
   getMatter360(user: SessionUser, matterId: string) {
@@ -86,13 +102,26 @@ export class WorkflowService {
     const completedChecklist = new Set(
       this.workflowStore.listCompletedChecklistKeys(user.firmId, matterId),
     );
-    const blockers = currentStage.requiredChecklistKeys
+    let blockers = currentStage.requiredChecklistKeys
       .filter((key) => !completedChecklist.has(key))
       .map((key): WorkflowBlocker => ({
         key,
         label: checklistLabel(key),
         severity: checklistSeverity(key),
       }));
+    if (
+      this.protocolReadiness &&
+      (currentStage.key === 'protocol' || currentStage.key === 'expert')
+    ) {
+      const readiness = this.protocolReadiness.getProtocolReadiness(
+        user.firmId,
+        matterId,
+        currentStage.key,
+      );
+      blockers = [...new Map(
+        [...blockers, ...readiness.progressionBlockers].map((blocker) => [blocker.key, blocker]),
+      ).values()];
+    }
     const deadlines = this.workflowStore.listMatterDeadlines(
       user.firmId,
       matterId,
@@ -293,6 +322,33 @@ export class WorkflowService {
           });
         }
       }
+    }
+    if (
+      this.protocolReadiness &&
+      (currentStage.key === 'protocol' || currentStage.key === 'expert')
+    ) {
+      const readiness = this.protocolReadiness.getProtocolReadiness(
+        user.firmId,
+        matterId,
+        currentStage.key,
+      );
+      const controls = new Map(readiness.controls.map((control) => [control.key, control]));
+      for (const key of suppliedChecklistKeys.filter((candidate) =>
+        currentStage.requiredChecklistKeys.includes(candidate),
+      )) {
+        const control = controls.get(
+          key as 'letter_of_claim_sent' | 'expert_instruction_confirmed',
+        );
+        if (!control?.eligible) {
+          supportedSuppliedChecklistKeys.delete(key);
+          objectiveBlockers.push({
+            key,
+            label: control?.explanation ?? `${checklistLabel(key)} is not supported by protocol records.`,
+            severity: 'warning',
+          });
+        }
+      }
+      objectiveBlockers.push(...readiness.progressionBlockers);
     }
     const completed = new Set([
       ...this.workflowStore.listCompletedChecklistKeys(user.firmId, matterId),

@@ -76,7 +76,7 @@ export class WorkflowStateConflictError extends Error {
   }
 }
 
-interface RecordTriggerInput {
+export interface RecordTriggerInput {
   firmId: string;
   matterId: string;
   actorUserId: string;
@@ -84,6 +84,12 @@ interface RecordTriggerInput {
   triggerDate: string;
   idempotencyKey: string;
   auditContext: AuditContext;
+}
+
+export interface TriggerDeadlineResult {
+  event: { id: string; type: string; occurredOn: string };
+  deadline: MatterDeadlineRecord;
+  task: { id: string; title: string; dueAt: string };
 }
 
 interface DeadlineRow extends Row {
@@ -431,23 +437,22 @@ export class WorkflowStore {
     return result ? mapWorkflow(result) : undefined;
   }
 
-  recordTriggerAndDeadline(input: RecordTriggerInput): {
-    event: {
-      id: string;
-      type: string;
-      occurredOn: string;
-    };
-    deadline: MatterDeadlineRecord;
-    task: {
-      id: string;
-      title: string;
-      dueAt: string;
-    };
-  } {
-    const createdAt = this.now().toISOString();
-
+  recordTriggerAndDeadline(input: RecordTriggerInput): TriggerDeadlineResult {
     this.database.exec('BEGIN IMMEDIATE');
     try {
+      const result = this.recordTriggerAndDeadlineInTransaction(input);
+      this.database.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  recordTriggerAndDeadlineInTransaction(
+    input: RecordTriggerInput,
+  ): TriggerDeadlineResult {
+      const createdAt = this.now().toISOString();
       const workflow = this.getMatterWorkflow(input.firmId, input.matterId);
       if (!workflow) {
         throw new Error('Matter workflow not found');
@@ -593,7 +598,6 @@ export class WorkflowStore {
         if (!existingTask) {
           throw new Error('Persisted workflow deadline has no reminder task');
         }
-        this.database.exec('COMMIT');
         return {
           event: {
             id: eventId,
@@ -762,7 +766,6 @@ export class WorkflowStore {
         throw new Error('Deadline could not be persisted');
       }
 
-      this.database.exec('COMMIT');
       return {
         event: {
           id: eventId,
@@ -770,6 +773,170 @@ export class WorkflowStore {
           occurredOn: input.triggerDate,
         },
         deadline,
+        task: { id: taskId, title: taskTitle, dueAt },
+      };
+  }
+
+  varyDeadline(input: {
+    firmId: string;
+    matterId: string;
+    actorUserId: string;
+    deadlineId: string;
+    agreedOn: string;
+    dueOn: string;
+    reason: string;
+    idempotencyKey: string;
+    auditContext: AuditContext;
+  }): TriggerDeadlineResult {
+    const createdAt = this.now().toISOString();
+    const payload = JSON.stringify({
+      deadlineId: input.deadlineId,
+      agreedOn: input.agreedOn,
+      dueOn: input.dueOn,
+      reason: input.reason,
+    });
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      this.requireMatterAndActor(input.firmId, input.matterId, input.actorUserId);
+      const existingEvent = row(this.database.prepare(
+        `SELECT id, payload_json AS payload FROM domain_events
+         WHERE firm_id = ? AND matter_id = ? AND idempotency_key = ?`,
+      ).get(input.firmId, input.matterId, input.idempotencyKey));
+      if (existingEvent) {
+        if (String(existingEvent.payload) !== payload) {
+          throw new Error('Idempotency key has already been used for different variation data');
+        }
+        const replayRow = row(this.database.prepare(
+          `${this.deadlineSelect()} WHERE md.firm_id = ? AND md.matter_id = ?
+            AND md.domain_event_id = ? AND md.supersedes_deadline_id = ?`,
+        ).get(input.firmId, input.matterId, String(existingEvent.id), input.deadlineId));
+        if (!replayRow) throw new Error('Persisted deadline variation was not found');
+        const deadline = mapDeadline(replayRow);
+        const task = this.findGeneratedTask(input.firmId, deadline.id);
+        if (!task) throw new Error('Persisted deadline variation has no reminder task');
+        this.database.exec('COMMIT');
+        return {
+          event: { id: String(existingEvent.id), type: 'deadline.varied', occurredOn: input.agreedOn },
+          deadline,
+          task,
+        };
+      }
+
+      const original = row(this.database.prepare(
+        `SELECT md.id, md.title, md.due_date AS dueDate,
+          md.deadline_rule_id AS deadlineRuleId, md.calendar_id AS calendarId,
+          md.calculation_json AS originalCalculationJson,
+          COALESCE((
+            SELECT dse.status FROM deadline_status_events dse
+            WHERE dse.firm_id = md.firm_id AND dse.deadline_id = md.id
+            ORDER BY dse.occurred_at DESC, dse.rowid DESC LIMIT 1
+          ), md.initial_status) AS status
+         FROM matter_deadlines md
+         WHERE md.id = ? AND md.firm_id = ? AND md.matter_id = ?`,
+      ).get(input.deadlineId, input.firmId, input.matterId));
+      if (!original) throw new Error('Deadline not found in matter');
+      if (String(original.status) !== 'pending') throw new Error('Only a pending deadline can be varied');
+      if (input.dueOn <= input.agreedOn) throw new Error('The varied due date must be after the agreement date');
+
+      const eventId = randomUUID();
+      const deadlineId = randomUUID();
+      this.database.prepare(
+        `INSERT INTO domain_events (
+          id, firm_id, matter_id, type, occurred_on, actor_user_id,
+          idempotency_key, payload_json, created_at
+        ) VALUES (?, ?, ?, 'deadline.varied', ?, ?, ?, ?, ?)`,
+      ).run(eventId, input.firmId, input.matterId, input.agreedOn,
+        input.actorUserId, input.idempotencyKey, payload, createdAt);
+      this.database.prepare(
+        `INSERT INTO deadline_status_events (
+          id, firm_id, matter_id, deadline_id, status, reason, actor_user_id, occurred_at
+        ) VALUES (?, ?, ?, ?, 'superseded', ?, ?, ?)`,
+      ).run(randomUUID(), input.firmId, input.matterId, input.deadlineId,
+        input.reason, input.actorUserId, createdAt);
+      const priorCalculation = JSON.parse(String(original.originalCalculationJson)) as DeadlineCalculation;
+      const explanation = `Deadline varied by agreement on ${input.agreedOn} to ${input.dueOn}. ${input.reason}`;
+      const calculation: DeadlineCalculation = {
+        ...priorCalculation,
+        triggerEventId: eventId,
+        triggerDate: input.agreedOn,
+        dueDate: input.dueOn,
+        explanation,
+      };
+      this.database.prepare(
+        `INSERT INTO matter_deadlines (
+          id, firm_id, matter_id, domain_event_id, deadline_rule_id,
+          calendar_id, title, trigger_date, due_date, initial_status,
+          explanation, calculation_json, created_by, created_at,
+          supersedes_deadline_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+      ).run(deadlineId, input.firmId, input.matterId, eventId,
+        String(original.deadlineRuleId), String(original.calendarId),
+        String(original.title), input.agreedOn, input.dueOn, explanation,
+        JSON.stringify(calculation), input.actorUserId, createdAt, input.deadlineId);
+      this.database.prepare(
+        `INSERT INTO deadline_status_events (
+          id, firm_id, matter_id, deadline_id, status, reason, actor_user_id, occurred_at
+        ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      ).run(randomUUID(), input.firmId, input.matterId, deadlineId,
+        `Agreed variation of ${input.deadlineId}`, input.actorUserId, createdAt);
+
+      const oldTask = this.findGeneratedTask(input.firmId, input.deadlineId);
+      if (!oldTask) throw new Error('The original deadline has no reminder task');
+      this.database.prepare(
+        `UPDATE tasks SET status = 'cancelled', updated_at = ?
+         WHERE id = ? AND firm_id = ? AND matter_id = ?
+           AND status NOT IN ('completed', 'cancelled')`,
+      ).run(createdAt, oldTask.id, input.firmId, input.matterId);
+      const matter = row(this.database.prepare(
+        'SELECT owner_user_id AS ownerUserId FROM matters WHERE firm_id = ? AND id = ?',
+      ).get(input.firmId, input.matterId));
+      if (!matter) throw new Error('Matter not found in firm');
+      const taskId = randomUUID();
+      const taskTitle = `Deadline: ${String(original.title)} (varied)`;
+      const dueAt = `${input.dueOn}T12:00:00.000Z`;
+      this.database.prepare(
+        `INSERT INTO tasks (
+          id, firm_id, matter_id, title, notes, due_at, priority, status,
+          assignee_user_id, completed_at, external_source, external_id,
+          import_batch_id, created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'high', 'open', ?, NULL,
+          'workflow', ?, NULL, ?, ?, ?)`,
+      ).run(taskId, input.firmId, input.matterId, taskTitle, explanation, dueAt,
+        String(matter.ownerUserId), deadlineId, input.actorUserId, createdAt, createdAt);
+      this.database.prepare(
+        `INSERT INTO workflow_generated_tasks (
+          firm_id, matter_id, deadline_id, task_id, source_key
+        ) VALUES (?, ?, ?, ?, ?)`,
+      ).run(input.firmId, input.matterId, deadlineId, taskId, `deadline:${deadlineId}`);
+      appendTimeline(this.database, {
+        firmId: input.firmId, matterId: input.matterId, type: 'deadline.varied',
+        title: `Deadline varied: ${String(original.title)}`, detail: explanation,
+        actorUserId: input.actorUserId, occurredAt: createdAt,
+        metadata: { originalDeadlineId: input.deadlineId, deadlineId, agreedOn: input.agreedOn, dueOn: input.dueOn },
+      });
+      appendAudit(this.database, {
+        firmId: input.firmId, matterId: input.matterId, userId: input.actorUserId,
+        action: 'deadline.varied', entityType: 'matter_deadline', entityId: deadlineId,
+        before: { deadlineId: input.deadlineId, dueOn: original.dueDate },
+        after: { agreedOn: input.agreedOn, dueOn: input.dueOn, reason: input.reason },
+        createdAt, requestId: input.auditContext.requestId, ipAddress: input.auditContext.ipAddress,
+      });
+      this.database.prepare(
+        `INSERT INTO integration_outbox (
+          id, firm_id, matter_id, topic, payload_json, status, attempts,
+          available_at, created_at, deduplication_key
+        ) VALUES (?, ?, ?, 'deadline.varied', ?, 'pending', 0, ?, ?, ?)`,
+      ).run(randomUUID(), input.firmId, input.matterId,
+        JSON.stringify({ deadlineId, originalDeadlineId: input.deadlineId, dueDate: input.dueOn }),
+        createdAt, createdAt, `deadline.varied:${deadlineId}`);
+      const deadlineRow = row(this.database.prepare(
+        `${this.deadlineSelect()} WHERE md.id = ? AND md.firm_id = ?`,
+      ).get(deadlineId, input.firmId));
+      if (!deadlineRow) throw new Error('Varied deadline could not be persisted');
+      this.database.exec('COMMIT');
+      return {
+        event: { id: eventId, type: 'deadline.varied', occurredOn: input.agreedOn },
+        deadline: mapDeadline(deadlineRow),
         task: { id: taskId, title: taskTitle, dueAt },
       };
     } catch (error) {
