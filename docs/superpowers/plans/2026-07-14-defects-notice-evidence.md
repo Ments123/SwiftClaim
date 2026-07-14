@@ -420,7 +420,7 @@ Using a fresh `DATA_DIR`, verify login, seeded evidence read, defect create/edit
 
 Document what is implemented and explicitly retain the evaluation-only boundary. Set the next SwiftClaim slice to Protocol and Experts. Do not claim AI, calling, migration or full CMS completion.
 
-- [ ] **Step 5: Commit and publish from the current GitHub head**
+- [x] **Step 5: Commit and publish from the current GitHub head**
 
 Commit: `docs: complete evidence investigation guide`
 
