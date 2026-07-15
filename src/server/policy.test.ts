@@ -46,4 +46,18 @@ describe('role capabilities', () => {
     expect(hasCapability(user('finance'), 'protocol.prepare')).toBe(false);
     expect(hasCapability(user('readonly'), 'protocol.review_report')).toBe(false);
   });
+
+  it('separates quantum preparation, approval and protected negotiations', () => {
+    expect(hasCapability(user('partner'), 'quantum.approve')).toBe(true);
+    expect(hasCapability(user('partner'), 'offers.read_protected')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'quantum.write')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'offers.write')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'offers.record_outcome')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'offers.read_protected')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'quantum.write')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'quantum.approve')).toBe(false);
+    expect(hasCapability(user('paralegal'), 'offers.read_protected')).toBe(false);
+    expect(hasCapability(user('finance'), 'quantum.read')).toBe(false);
+    expect(hasCapability(user('readonly'), 'offers.read_open')).toBe(false);
+  });
 });

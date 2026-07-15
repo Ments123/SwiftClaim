@@ -9,6 +9,7 @@ import {
   WorkflowError,
   WorkflowService,
   type ProtocolReadinessProvider,
+  type QuantumReadinessProvider,
 } from './service.js';
 import { WorkflowStore } from './store.js';
 
@@ -45,6 +46,7 @@ describe('WorkflowService', () => {
   let eligibleEvidenceControls: Set<string>;
   let protocolEligible: boolean;
   let protocolProgressionBlocked: boolean;
+  let quantumEligible: boolean;
 
   beforeEach(() => {
     database = createDatabase(':memory:');
@@ -83,6 +85,7 @@ describe('WorkflowService', () => {
     eligibleEvidenceControls = new Set();
     protocolEligible = false;
     protocolProgressionBlocked = true;
+    quantumEligible = false;
     const evidenceReadiness: EvidenceReadinessProvider = {
       getEvidenceReadiness: () => ({
         controls: [
@@ -116,12 +119,29 @@ describe('WorkflowService', () => {
           : [],
       }),
     };
+    const quantumReadiness: QuantumReadinessProvider = {
+      getQuantumReadiness: () => ({
+        controls: [
+          {
+            key: 'works_status_reviewed',
+            eligible: quantumEligible,
+            explanation: 'The approved work position requires review.',
+          },
+          {
+            key: 'damages_schedule_reviewed',
+            eligible: quantumEligible,
+            explanation: 'The approved damages schedule requires review.',
+          },
+        ],
+      }),
+    };
     service = new WorkflowService(
       new MatterStore(database, () => FIXED_NOW),
       workflowStore,
       () => FIXED_NOW,
       evidenceReadiness,
       protocolReadiness,
+      quantumReadiness,
     );
     workflowStore.instantiateMatterWorkflow(
       SEED_IDS.northstarFirm,
@@ -176,6 +196,50 @@ describe('WorkflowService', () => {
         AUDIT_CONTEXT,
       );
     }
+  }
+
+  function advanceToRepairsQuantum() {
+    advanceToEvidence();
+    eligibleEvidenceControls = new Set([
+      'defect_schedule_recorded',
+      'notice_evidence_recorded',
+      'photographs_recorded',
+    ]);
+    service.transitionStage(
+      ava,
+      TEST_MATTER_ID,
+      {
+        toStageKey: 'protocol',
+        expectedVersion: 4,
+        completedChecklistKeys: [...eligibleEvidenceControls],
+        reason: 'Evidence records are ready for the protocol stage.',
+      },
+      AUDIT_CONTEXT,
+    );
+    protocolEligible = true;
+    protocolProgressionBlocked = false;
+    service.transitionStage(
+      ava,
+      TEST_MATTER_ID,
+      {
+        toStageKey: 'expert',
+        expectedVersion: 5,
+        completedChecklistKeys: ['letter_of_claim_sent'],
+        reason: 'The protocol position is ready for expert evidence.',
+      },
+      AUDIT_CONTEXT,
+    );
+    service.transitionStage(
+      ava,
+      TEST_MATTER_ID,
+      {
+        toStageKey: 'repairs_quantum',
+        expectedVersion: 6,
+        completedChecklistKeys: ['expert_instruction_confirmed'],
+        reason: 'The expert evidence is reviewed for repairs and quantum.',
+      },
+      AUDIT_CONTEXT,
+    );
   }
 
   it('blocks unsupported evidence readiness confirmations and accepts supported ones', () => {
@@ -287,6 +351,44 @@ describe('WorkflowService', () => {
     protocolProgressionBlocked = false;
     expect(service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT)
       .workflow.currentStageKey).toBe('expert');
+  });
+
+  it('blocks unsupported repairs and quantum confirmations without exposing protected offers', () => {
+    advanceToRepairsQuantum();
+    const command = {
+      toStageKey: 'negotiation',
+      expectedVersion: 7,
+      completedChecklistKeys: [
+        'works_status_reviewed',
+        'damages_schedule_reviewed',
+      ],
+      reason: 'The current works and damages position is ready for negotiation.',
+    };
+
+    expect(() =>
+      service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT),
+    ).toThrowError(
+      expect.objectContaining({
+        code: 'READINESS_BLOCKED',
+        details: {
+          blockers: expect.arrayContaining([
+            expect.objectContaining({ key: 'works_status_reviewed' }),
+            expect.objectContaining({ key: 'damages_schedule_reviewed' }),
+          ]),
+        },
+      }),
+    );
+    try {
+      service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT);
+    } catch (error) {
+      expect(JSON.stringify(error)).not.toContain('offer');
+    }
+
+    quantumEligible = true;
+    expect(
+      service.transitionStage(ava, TEST_MATTER_ID, command, AUDIT_CONTEXT)
+        .workflow.currentStageKey,
+    ).toBe('negotiation');
   });
 
   it('returns stages, readiness blockers and explainable critical deadlines', () => {

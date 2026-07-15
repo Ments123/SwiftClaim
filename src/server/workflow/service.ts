@@ -44,6 +44,19 @@ export interface ProtocolReadinessProvider {
   };
 }
 
+export interface QuantumReadinessProvider {
+  getQuantumReadiness(
+    firmId: string,
+    matterId: string,
+  ): {
+    controls: Array<{
+      key: 'works_status_reviewed' | 'damages_schedule_reviewed';
+      eligible: boolean;
+      explanation: string;
+    }>;
+  };
+}
+
 function checklistLabel(key: string): string {
   const sentence = key.replaceAll('_', ' ');
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
@@ -68,6 +81,7 @@ export class WorkflowService {
     private readonly now: () => Date,
     private readonly evidenceReadiness?: EvidenceReadinessProvider,
     private readonly protocolReadiness?: ProtocolReadinessProvider,
+    private readonly quantumReadiness?: QuantumReadinessProvider,
   ) {}
 
   getMatter360(user: SessionUser, matterId: string) {
@@ -121,6 +135,26 @@ export class WorkflowService {
       blockers = [...new Map(
         [...blockers, ...readiness.progressionBlockers].map((blocker) => [blocker.key, blocker]),
       ).values()];
+    }
+    if (this.quantumReadiness && currentStage.key === 'repairs_quantum') {
+      const readiness = this.quantumReadiness.getQuantumReadiness(
+        user.firmId,
+        matterId,
+      );
+      const objective = readiness.controls
+        .filter(({ eligible }) => !eligible)
+        .map(
+          (control): WorkflowBlocker => ({
+            key: control.key,
+            label: control.explanation,
+            severity: 'warning',
+          }),
+        );
+      blockers = [
+        ...new Map(
+          [...blockers, ...objective].map((blocker) => [blocker.key, blocker]),
+        ).values(),
+      ];
     }
     const deadlines = this.workflowStore.listMatterDeadlines(
       user.firmId,
@@ -349,6 +383,32 @@ export class WorkflowService {
         }
       }
       objectiveBlockers.push(...readiness.progressionBlockers);
+    }
+    if (this.quantumReadiness && currentStage.key === 'repairs_quantum') {
+      const readiness = this.quantumReadiness.getQuantumReadiness(
+        user.firmId,
+        matterId,
+      );
+      const controls = new Map(
+        readiness.controls.map((control) => [control.key, control]),
+      );
+      for (const key of suppliedChecklistKeys.filter((candidate) =>
+        currentStage.requiredChecklistKeys.includes(candidate),
+      )) {
+        const control = controls.get(
+          key as 'works_status_reviewed' | 'damages_schedule_reviewed',
+        );
+        if (!control?.eligible) {
+          supportedSuppliedChecklistKeys.delete(key);
+          objectiveBlockers.push({
+            key,
+            label:
+              control?.explanation ??
+              `${checklistLabel(key)} is not supported by the repairs and quantum record.`,
+            severity: 'warning',
+          });
+        }
+      }
     }
     const completed = new Set([
       ...this.workflowStore.listCompletedChecklistKeys(user.firmId, matterId),

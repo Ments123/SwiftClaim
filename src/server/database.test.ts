@@ -105,6 +105,19 @@ describe('canonical database', () => {
         'expert_report_records',
         'expert_questions',
         'expert_question_answers',
+        'work_schedules',
+        'work_items',
+        'work_item_defects',
+        'work_item_evidence_links',
+        'repair_events',
+        'loss_schedules',
+        'loss_items',
+        'loss_item_evidence_links',
+        'general_damages_reviews',
+        'offers',
+        'part_36_terms',
+        'offer_events',
+        'quantum_command_receipts',
       ]),
     );
     expect(database.prepare('PRAGMA foreign_keys').get()).toEqual({
@@ -146,6 +159,11 @@ describe('canonical database', () => {
       {
         version: 5,
         name: 'protocol and experts',
+        checksumLength: 64,
+      },
+      {
+        version: 6,
+        name: 'repairs quantum and offers',
         checksumLength: 64,
       },
     ]);

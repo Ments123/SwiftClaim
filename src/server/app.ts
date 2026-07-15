@@ -34,6 +34,9 @@ import { canCreateMatter, hasCapability, type SessionUser } from './policy.js';
 import { protocolRoutes } from './protocol/routes.js';
 import { ProtocolService } from './protocol/service.js';
 import { ProtocolStore } from './protocol/store.js';
+import { quantumRoutes } from './quantum/routes.js';
+import { QuantumService } from './quantum/service.js';
+import { QuantumStore } from './quantum/store.js';
 import {
   createSessionToken,
   hashPassword,
@@ -115,6 +118,12 @@ function publicUser(user: SessionUser) {
       canApproveProtocol: hasCapability(user, 'protocol.approve'),
       canOverrideExpertConflict: hasCapability(user, 'protocol.override_conflict'),
       canReviewExpertReport: hasCapability(user, 'protocol.review_report'),
+      canReadQuantum: hasCapability(user, 'quantum.read'),
+      canWriteQuantum: hasCapability(user, 'quantum.write'),
+      canApproveQuantum: hasCapability(user, 'quantum.approve'),
+      canReadProtectedOffers: hasCapability(user, 'offers.read_protected'),
+      canWriteOffers: hasCapability(user, 'offers.write'),
+      canRecordOfferOutcome: hasCapability(user, 'offers.record_outcome'),
     },
   };
 }
@@ -140,12 +149,15 @@ export async function buildApp(
     options.storagePath,
     now,
   );
+  const quantumStore = new QuantumStore(database, now);
+  const quantumService = new QuantumService(quantumStore, now);
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
     now,
     evidenceService,
     protocolService,
+    quantumService,
   );
   const intakeStore = new IntakeStore(database, now);
   const intakeService = new IntakeService(
@@ -547,6 +559,15 @@ export async function buildApp(
     service: protocolService,
     store: protocolStore,
     storagePath: options.storagePath,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(quantumRoutes, {
+    service: quantumService,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,

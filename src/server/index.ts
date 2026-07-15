@@ -6,6 +6,7 @@ import {
   createDatabase,
   seedDatabase,
   seedProtocolExpertsEvaluation,
+  seedRepairsQuantumEvaluation,
 } from './database.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -35,6 +36,7 @@ const shouldSeed = process.env.SEED_DEMO_DATA
 if (shouldSeed) {
   seedDatabase(database);
   await seedProtocolExpertsEvaluation(database, storagePath);
+  seedRepairsQuantumEvaluation(database);
 }
 
 const app = await buildApp({

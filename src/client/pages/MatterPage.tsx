@@ -27,7 +27,9 @@ import {
   type EvidenceWorkspace,
   type MatterIntakeProfile,
   type MatterSection,
+  type ProtectedOffer,
   type ProtocolWorkspace,
+  type RepairsQuantumWorkspace,
   type TransitionWorkflowCommand,
 } from '../api.js';
 import { Dialog } from '../components/Dialog.js';
@@ -39,6 +41,7 @@ import { MatterSectionRail } from '../components/matter/MatterSectionRail.js';
 import { OperationalOverview } from '../components/matter/OperationalOverview.js';
 import { PropertyTenancyPanel } from '../components/matter/PropertyTenancyPanel.js';
 import { ProtocolExpertsPanel } from '../components/matter/ProtocolExpertsPanel.js';
+import { RepairsQuantumPanel } from '../components/matter/RepairsQuantumPanel.js';
 
 interface MatterPageProps {
   matterId: string;
@@ -75,6 +78,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [protocolWorkspace, setProtocolWorkspace] = useState<ProtocolWorkspace>();
   const [protocolLoading, setProtocolLoading] = useState(false);
   const [protocolError, setProtocolError] = useState('');
+  const [quantumWorkspace, setQuantumWorkspace] = useState<RepairsQuantumWorkspace>();
+  const [quantumLoading, setQuantumLoading] = useState(false);
+  const [quantumError, setQuantumError] = useState('');
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
@@ -134,6 +140,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setProtocolWorkspace(undefined);
     setProtocolLoading(false);
     setProtocolError('');
+    setQuantumWorkspace(undefined);
+    setQuantumLoading(false);
+    setQuantumError('');
     setMutationError('');
     setSection('overview');
     void loadAll(controller.signal);
@@ -227,6 +236,35 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     return () => controller.abort();
   }, [loadProtocolWorkspace, protocolError, protocolWorkspace, section]);
 
+  const loadQuantumWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setQuantumLoading(true);
+    setQuantumError('');
+    try {
+      setQuantumWorkspace(await request<RepairsQuantumWorkspace>(
+        `/api/matters/${matterId}/repairs-quantum`, { signal },
+      ));
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setQuantumError(reason instanceof Error ? reason.message : 'The repairs and quantum workspace is unavailable.');
+    } finally {
+      if (!signal?.aborted) setQuantumLoading(false);
+    }
+  }, [matterId]);
+
+  useEffect(() => {
+    if (section !== 'damages_offers' || quantumWorkspace || quantumError) return;
+    const controller = new AbortController();
+    void loadQuantumWorkspace(controller.signal);
+    return () => controller.abort();
+  }, [loadQuantumWorkspace, quantumError, quantumWorkspace, section]);
+
+  const loadProtectedOffers = useCallback(async () => {
+    const response = await request<{ offers: ProtectedOffer[] }>(
+      `/api/matters/${matterId}/offers/protected`,
+    );
+    return response.offers;
+  }, [matterId]);
+
   const completeTask = async (taskId: string) => {
     setUpdatingTask(taskId);
     try {
@@ -281,6 +319,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         defects_repairs: evidenceWorkspace?.defects.length,
         evidence: evidenceWorkspace?.evidenceItems.length,
         protocol_experts: protocolWorkspace?.experts.length,
+        damages_offers:
+          (quantumWorkspace?.workSchedules[0]?.items.length ?? 0) +
+          (quantumWorkspace?.lossSchedules[0]?.items.length ?? 0),
       }
     : { tasks_calendar: summary.nextActions.length };
 
@@ -386,6 +427,18 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
 
       {section === 'protocol_experts' && protocolWorkspace ? (
         <ProtocolExpertsPanel matterId={matterId} workspace={protocolWorkspace} onRefresh={() => loadProtocolWorkspace()} />
+      ) : null}
+
+      {section === 'damages_offers' && quantumLoading && !quantumWorkspace ? (
+        <section className="surface tab-surface" aria-busy="true"><div className="skeleton skeleton--heading" /><div className="skeleton skeleton--matter" /></section>
+      ) : null}
+
+      {section === 'damages_offers' && quantumError && !quantumWorkspace ? (
+        <section className="surface tab-surface page-state"><Scale size={30} /><h2>Repairs and quantum unavailable</h2><p>{quantumError}</p><button className="button button--secondary" type="button" onClick={() => void loadQuantumWorkspace()}><RefreshCw size={15} /> Retry</button></section>
+      ) : null}
+
+      {section === 'damages_offers' && quantumWorkspace ? (
+        <RepairsQuantumPanel matterId={matterId} workspace={quantumWorkspace} onRefresh={() => loadQuantumWorkspace()} loadProtectedOffers={loadProtectedOffers} />
       ) : null}
 
       {aggregate && section === 'documents' ? (
