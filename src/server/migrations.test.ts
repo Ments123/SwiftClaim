@@ -18,9 +18,64 @@ describe('runMigrations', () => {
       { version: 3, name: 'intake and onboarding' },
       { version: 4, name: 'defects notice and evidence' },
       { version: 5, name: 'protocol and experts' },
+      { version: 6, name: 'repairs quantum and offers' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
+    );
+  });
+
+  it('creates repairs quantum and offer tables with immutable legal records', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-15T09:00:00.000Z');
+
+    const tableNames = new Set(
+      (database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all() as Array<{ name: string }>).map(({ name }) => name),
+    );
+    expect([...tableNames]).toEqual(
+      expect.arrayContaining([
+        'work_schedules',
+        'work_items',
+        'work_item_defects',
+        'work_item_evidence_links',
+        'repair_events',
+        'loss_schedules',
+        'loss_items',
+        'loss_item_evidence_links',
+        'general_damages_reviews',
+        'offers',
+        'part_36_terms',
+        'offer_events',
+        'quantum_command_receipts',
+      ]),
+    );
+
+    const triggerNames = new Set(
+      (database
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'trigger'
+             AND (name LIKE 'work_%' OR name LIKE 'repair_%'
+               OR name LIKE 'loss_%' OR name LIKE 'general_damages_%'
+               OR name LIKE 'offer_%' OR name LIKE 'part_36_%')`,
+        )
+        .all() as Array<{ name: string }>).map(({ name }) => name),
+    );
+    expect([...triggerNames]).toEqual(
+      expect.arrayContaining([
+        'work_schedules_approved_no_update',
+        'work_items_approved_no_update',
+        'repair_events_no_update',
+        'loss_schedules_approved_no_update',
+        'loss_items_approved_no_update',
+        'work_item_evidence_links_no_delete',
+        'repair_event_evidence_links_no_delete',
+        'loss_item_evidence_links_no_delete',
+        'general_damages_reviews_no_update',
+        'offer_events_no_update',
+      ]),
     );
   });
 

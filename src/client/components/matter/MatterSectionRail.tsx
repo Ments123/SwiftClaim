@@ -65,9 +65,9 @@ const SECTION_ITEMS: ReadonlyArray<{
   },
   {
     id: 'damages_offers',
-    label: 'Damages & offers',
+    label: 'Repairs & quantum',
     icon: Banknote,
-    available: false,
+    available: true,
   },
   { id: 'proceedings', label: 'Proceedings', icon: Gavel, available: false },
   {

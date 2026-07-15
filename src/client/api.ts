@@ -681,6 +681,195 @@ export interface ProtocolWorkspace {
   };
 }
 
+export interface RepairProjection {
+  status: string;
+  producingEventId: string | null;
+  lastAccessOutcome: string | null;
+  completionAsserted: boolean;
+  clientPosition: 'not_recorded' | 'accepted' | 'disputed';
+  verification: 'not_verified' | 'failed' | 'verified';
+  warnings: Array<{ key: string; detail: string }>;
+}
+
+export interface WorkScheduleRecord {
+  id: string;
+  scheduleVersion: number;
+  recordVersion: number;
+  title: string;
+  sourceType: string;
+  sourceDocumentVersionId: string | null;
+  status: string;
+  basedOnScheduleId: string | null;
+  approvalNote: string;
+  acknowledgedWarningKeys: string[];
+  createdBy: string;
+  createdAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  items: Array<{
+    id: string;
+    lineageKey: string;
+    area: string;
+    description: string;
+    responsibilityPosition: string;
+    priority: 'urgent' | 'high' | 'routine';
+    targetStartOn: string | null;
+    targetCompletionOn: string | null;
+    estimatedCostMinor: number | null;
+    currency: string;
+    contractor: string;
+    sourceNote: string;
+    displayPosition: number;
+    defectIds: string[];
+    evidenceItemIds: string[];
+    repairEvents: Array<{
+      id: string;
+      eventType: string;
+      occurredAt: string;
+      actorType: string;
+      verifier: string;
+      evidenceIds: string[];
+    }>;
+    projection: RepairProjection;
+  }>;
+}
+
+export interface LossScheduleRecord {
+  id: string;
+  scheduleVersion: number;
+  recordVersion: number;
+  title: string;
+  status: string;
+  basedOnScheduleId: string | null;
+  valuationOn: string;
+  currency: string;
+  notes: string;
+  approvalNote: string;
+  acknowledgedEvidenceGapItemIds: string[];
+  createdBy: string;
+  createdAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  items: Array<{
+    id: string;
+    recordVersion: number;
+    lineageKey: string;
+    category: string;
+    description: string;
+    periodStartOn: string | null;
+    periodEndOn: string | null;
+    calculationType: string;
+    quantity: string | null;
+    unitLabel: string;
+    rateMinor: number | null;
+    fixedAmountMinor: number | null;
+    manualAmountMinor: number | null;
+    manualBasis: string;
+    calculatedAmountMinor: number;
+    calculation: string;
+    currency: string;
+    position: string;
+    evidenceStatus: string;
+    sourceNote: string;
+    displayPosition: number;
+    evidenceItemIds: string[];
+  }>;
+  totals: {
+    specialDamagesMinor: number;
+    byPosition: Record<string, number>;
+    byCategory: Record<string, number>;
+    evidenceGapCount: number;
+    unsupportedAmountMinor: number;
+    generalDamages: {
+      lowMinor: number;
+      highMinor: number;
+      preferredMinor: number | null;
+    } | null;
+    combined: { lowMinor: number; highMinor: number } | null;
+  };
+}
+
+export interface OfferRecord {
+  id: string;
+  offerReference: string;
+  recordVersion: number;
+  direction: string;
+  offerType: string;
+  confidentiality: string;
+  scope: string;
+  scopeDescription: string;
+  damagesMinor: number | null;
+  costsMinor: number | null;
+  totalMinor: number | null;
+  currency: string;
+  worksTerms: string;
+  nonMoneyTerms: string;
+  interestTreatment: string;
+  writtenOfferDocumentVersionId: string | null;
+  madeOn: string;
+  idempotencyKey: string;
+  createdBy: string;
+  createdAt: string;
+  part36: {
+    relevantPeriodDays: number;
+    relevantPeriodBasis: string;
+    serviceOn: string | null;
+    serviceConfirmed: boolean;
+    projectedPeriodEndOn: string | null;
+    calculationExplanation: string;
+    includesCounterclaim: boolean;
+    paymentPeriodDays: number;
+    validationStatus: string;
+    validationNote: string;
+  } | null;
+  events: Array<{
+    id: string;
+    eventType: string;
+    occurredAt: string;
+    note: string;
+    sourceDocumentVersionId: string | null;
+    supersedesEventId: string | null;
+    explicitConfirmation: boolean;
+    createdBy: string;
+    createdAt: string;
+  }>;
+}
+
+export type ProtectedOffer = OfferRecord;
+
+export interface RepairsQuantumWorkspace {
+  matterId: string;
+  permissions: {
+    canWrite: boolean;
+    canApprove: boolean;
+    canWriteOffers: boolean;
+    canReadProtectedOffers: boolean;
+    canRecordOfferOutcome: boolean;
+  };
+  workSchedules: WorkScheduleRecord[];
+  lossSchedules: LossScheduleRecord[];
+  generalDamagesReviews: Array<{
+    id: string;
+    valuationOn: string;
+    lowMinor: number;
+    highMinor: number;
+    preferredMinor: number | null;
+    currency: string;
+    basis: string;
+    authorities: string[];
+    reviewNote: string;
+    nonePresentlyAdvanced: boolean;
+    supersedesReviewId: string | null;
+    reviewedBy: string;
+    reviewedAt: string;
+  }>;
+  openOffers: OfferRecord[];
+  protectedOfferCount: number;
+  readiness: {
+    controls: Array<{ key: string; eligible: boolean; explanation: string }>;
+  };
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'

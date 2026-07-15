@@ -7,6 +7,8 @@ import { IntakeStore } from './intake/store.js';
 import type { SessionUser } from './policy.js';
 import { ProtocolService } from './protocol/service.js';
 import { ProtocolStore } from './protocol/store.js';
+import { QuantumService } from './quantum/service.js';
+import { QuantumStore } from './quantum/store.js';
 import { hashPassword } from './security.js';
 import { MatterStore } from './store.js';
 import { seedWorkflowDefinitions } from './workflow/definitions.js';
@@ -1696,5 +1698,419 @@ export async function seedProtocolExpertsEvaluation(
       correctionReason: '',
     }, audit);
     expert = service.getWorkspace(user, SEED_IDS.northstarMatter)!.experts[0]!;
+  }
+}
+
+export function seedRepairsQuantumEvaluation(database: DatabaseSync): void {
+  const now = () => new Date('2026-08-20T09:00:00.000Z');
+  const user: SessionUser = {
+    id: SEED_IDS.ava,
+    firmId: SEED_IDS.northstarFirm,
+    firmName: 'Northstar Legal',
+    email: 'ava@northstar.test',
+    name: 'Ava Morgan',
+    role: 'solicitor',
+  };
+  const partner: SessionUser = {
+    ...user,
+    id: SEED_IDS.partner,
+    email: 'partner@northstar.test',
+    name: 'Marcus Reed',
+    role: 'partner',
+  };
+  const audit = {
+    requestId: 'seed-repairs-quantum-evaluation',
+    ipAddress: '127.0.0.1',
+  };
+  const workflowStore = new WorkflowStore(database, now);
+  const protocolStore = new ProtocolStore(database, now, workflowStore);
+  const protocol = new ProtocolService(database, protocolStore, '', now);
+  const quantumStore = new QuantumStore(database, now);
+  const quantum = new QuantumService(quantumStore, now);
+  const workflow = new WorkflowService(
+    new MatterStore(database, now),
+    workflowStore,
+    now,
+    undefined,
+    protocol,
+    quantum,
+  );
+
+  let protocolWorkspace = protocol.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (!protocolWorkspace) throw new Error('The Maya protocol workspace is unavailable');
+  let expert = protocolWorkspace.experts[0];
+  if (!expert) throw new Error('The Maya expert engagement is unavailable');
+  let report = expert.reports[0];
+  if (!report) {
+    report = protocol.recordExpertReport(
+      user,
+      SEED_IDS.northstarMatter,
+      expert.id,
+      {
+        idempotencyKey: 'seed-expert-report-repairs-quantum',
+        reportType: 'single_joint_report',
+        reportOn: '2026-07-29',
+        receivedOn: '2026-07-30',
+        coverageSummary:
+          'The synthetic report covers the recorded conditions, specifies repair works and identifies the bedroom works as urgent.',
+        urgentWorksIdentified: true,
+        documentVersionId: SEED_IDS.repairVersion,
+        supersedesReportId: null,
+      },
+      audit,
+    );
+  }
+  protocolWorkspace = protocol.getWorkspace(user, SEED_IDS.northstarMatter)!;
+  expert = protocolWorkspace.experts[0]!;
+  if (!expert.milestones.some(({ eventType }) => eventType === 'report_reviewed')) {
+    protocol.recordExpertMilestone(
+      partner,
+      SEED_IDS.northstarMatter,
+      expert.id,
+      {
+        idempotencyKey: 'seed-expert-report-reviewed-repairs-quantum',
+        instructionVersionId: expert.instructionVersions[0]!.id,
+        eventType: 'report_reviewed',
+        occurredAt: '2026-08-03T14:00:00.000Z',
+        legalTriggerOn: null,
+        detail:
+          'Marcus Reed reviewed the synthetic report, its limitations and the proposed schedule of works.',
+        supportingDocumentVersionId: SEED_IDS.repairVersion,
+        supersedesEventId: null,
+        correctionReason: '',
+      },
+      audit,
+    );
+  }
+
+  let matterWorkflow = workflowStore.getMatterWorkflow(user.firmId, SEED_IDS.northstarMatter);
+  if (!matterWorkflow) throw new Error('The Maya workflow is unavailable');
+  if (matterWorkflow.currentStage.key === 'protocol') {
+    workflow.transitionStage(
+      user,
+      SEED_IDS.northstarMatter,
+      {
+        toStageKey: 'expert',
+        expectedVersion: matterWorkflow.version,
+        completedChecklistKeys: ['letter_of_claim_sent'],
+        reason: 'The governed protocol record is complete and expert evidence is underway.',
+      },
+      audit,
+    );
+    matterWorkflow = workflowStore.getMatterWorkflow(user.firmId, SEED_IDS.northstarMatter)!;
+  }
+  if (matterWorkflow.currentStage.key === 'expert') {
+    workflow.transitionStage(
+      user,
+      SEED_IDS.northstarMatter,
+      {
+        toStageKey: 'repairs_quantum',
+        expectedVersion: matterWorkflow.version,
+        completedChecklistKeys: ['expert_instruction_confirmed'],
+        reason: 'The expert report has been received and reviewed for repairs and quantum.',
+      },
+      audit,
+    );
+  }
+
+  let quantumWorkspace = quantum.getWorkspace(user, SEED_IDS.northstarMatter);
+  let workSchedule = quantumWorkspace.workSchedules[0];
+  if (!workSchedule) {
+    workSchedule = quantum.createWorkSchedule(
+      user,
+      SEED_IDS.northstarMatter,
+      {
+        title: 'Elena Ward synthetic schedule of works',
+        sourceType: 'expert_report',
+        sourceDocumentVersionId: SEED_IDS.repairVersion,
+        basedOnScheduleId: null,
+        items: [
+          {
+            lineageKey: 'bedroom-damp-treatment',
+            area: 'Main bedroom',
+            description: 'Remedy water ingress, treat damp and mould, and reinstate the affected finishes.',
+            responsibilityPosition: 'disputed',
+            priority: 'urgent',
+            targetStartOn: '2026-08-05',
+            targetCompletionOn: '2026-08-12',
+            estimatedCostMinor: 125_000,
+            contractor: 'Meridian Repairs (synthetic)',
+            sourceNote: 'Transcribed from the fictional expert report and checked by Ava Morgan.',
+            defectIds: [SEED_IDS.bedroomDampDefect],
+            evidenceItemIds: [SEED_IDS.bedroomPhotoEvidence, SEED_IDS.repairEvidence],
+          },
+          {
+            lineageKey: 'bathroom-leak-repair',
+            area: 'Bathroom',
+            description: 'Repair the bath-edge leak and reinstate water-damaged finishes.',
+            responsibilityPosition: 'agreed',
+            priority: 'high',
+            targetStartOn: '2026-08-04',
+            targetCompletionOn: '2026-08-08',
+            estimatedCostMinor: 48_000,
+            contractor: 'Meridian Repairs (synthetic)',
+            sourceNote: 'Transcribed from the fictional expert report and checked by Ava Morgan.',
+            defectIds: [SEED_IDS.bathroomLeakDefect],
+            evidenceItemIds: [SEED_IDS.bathroomPhotoEvidence],
+          },
+        ],
+      },
+      audit,
+    );
+  }
+  const bedroom = workSchedule.items.find(({ lineageKey }) => lineageKey === 'bedroom-damp-treatment')!;
+  const bathroom = workSchedule.items.find(({ lineageKey }) => lineageKey === 'bathroom-leak-repair')!;
+  const repairEvents = [
+    {
+      workItemId: bedroom.id,
+      idempotencyKey: 'seed-bedroom-completion-asserted',
+      eventType: 'completion_asserted' as const,
+      occurredAt: '2026-08-12T16:00:00.000Z',
+      actorType: 'contractor' as const,
+      note: 'The synthetic contractor asserted that the bedroom works were complete.',
+      evidenceItemIds: [SEED_IDS.repairEvidence],
+      verifier: '',
+    },
+    {
+      workItemId: bedroom.id,
+      idempotencyKey: 'seed-bedroom-completion-disputed',
+      eventType: 'client_disputes_completion' as const,
+      occurredAt: '2026-08-13T09:30:00.000Z',
+      actorType: 'client' as const,
+      note: 'Maya reports that damp remains visible and disputes completion of the bedroom works.',
+      evidenceItemIds: [SEED_IDS.bedroomPhotoEvidence],
+      verifier: '',
+    },
+    {
+      workItemId: bathroom.id,
+      idempotencyKey: 'seed-bathroom-verified-complete',
+      eventType: 'verified_complete' as const,
+      occurredAt: '2026-08-09T11:00:00.000Z',
+      actorType: 'expert' as const,
+      note: 'The fictional expert independently verified completion of the bathroom repair.',
+      evidenceItemIds: [SEED_IDS.bathroomPhotoEvidence],
+      verifier: 'Elena Ward, fictional building surveyor',
+    },
+  ];
+  for (const event of repairEvents) {
+    quantum.recordRepairEvent(
+      user,
+      SEED_IDS.northstarMatter,
+      event.workItemId,
+      {
+        idempotencyKey: event.idempotencyKey,
+        eventType: event.eventType,
+        occurredAt: event.occurredAt,
+        actorType: event.actorType,
+        note: event.note,
+        appointmentFrom: null,
+        appointmentTo: null,
+        evidenceItemIds: event.evidenceItemIds,
+        verifier: event.verifier,
+        supersedesEventId: null,
+        correctionReason: '',
+      },
+      audit,
+    );
+  }
+  quantumWorkspace = quantum.getWorkspace(user, SEED_IDS.northstarMatter);
+  workSchedule = quantumWorkspace.workSchedules[0]!;
+  if (workSchedule.status === 'draft') {
+    const warningKeys = [...new Set(
+      workSchedule.items.flatMap(({ projection }) => projection.warnings.map(({ key }) => key)),
+    )];
+    quantum.approveWorkSchedule(
+      partner,
+      SEED_IDS.northstarMatter,
+      workSchedule.id,
+      {
+        expectedVersion: workSchedule.recordVersion,
+        idempotencyKey: 'seed-work-schedule-approved',
+        approvalNote: 'Marcus Reed reviewed the current assertions, client dispute, verification and warnings.',
+        acknowledgedWarningKeys: warningKeys,
+      },
+      audit,
+    );
+  }
+
+  quantumWorkspace = quantum.getWorkspace(user, SEED_IDS.northstarMatter);
+  let lossSchedule = quantumWorkspace.lossSchedules[0];
+  if (!lossSchedule) {
+    lossSchedule = quantum.createLossSchedule(
+      user,
+      SEED_IDS.northstarMatter,
+      {
+        title: 'Maya Clarke synthetic schedule of loss',
+        valuationOn: '2026-08-20',
+        currency: 'GBP',
+        basedOnScheduleId: null,
+        notes: 'Evaluation-only figures requiring retained evidence and solicitor review.',
+      },
+      audit,
+    );
+    lossSchedule = quantum.addLossItem(
+      user,
+      SEED_IDS.northstarMatter,
+      lossSchedule.id,
+      {
+        expectedVersion: lossSchedule.recordVersion,
+        lineageKey: 'additional-heating-q1',
+        category: 'additional_heating',
+        description: 'Additional electric heating during the damp period.',
+        periodStartOn: '2026-01-01',
+        periodEndOn: '2026-03-31',
+        calculationType: 'quantity_rate',
+        quantity: '12.5',
+        unitLabel: 'weeks',
+        rateMinor: 425,
+        fixedAmountMinor: null,
+        manualAmountMinor: null,
+        manualBasis: '',
+        position: 'claimed',
+        evidenceStatus: 'partial',
+        sourceNote: 'Checked against the synthetic heating attendance record.',
+        evidenceItemIds: [SEED_IDS.repairEvidence],
+      },
+      audit,
+    );
+    lossSchedule = quantum.addLossItem(
+      user,
+      SEED_IDS.northstarMatter,
+      lossSchedule.id,
+      {
+        expectedVersion: lossSchedule.recordVersion,
+        lineageKey: 'damaged-bedroom-belongings',
+        category: 'damaged_belongings',
+        description: 'Replacement of synthetic bedroom furnishings damaged by mould.',
+        periodStartOn: null,
+        periodEndOn: null,
+        calculationType: 'fixed',
+        quantity: null,
+        unitLabel: '',
+        rateMinor: null,
+        fixedAmountMinor: 9_000,
+        manualAmountMinor: null,
+        manualBasis: '',
+        position: 'claimed',
+        evidenceStatus: 'supported',
+        sourceNote: 'Supported by the retained synthetic bedroom photograph and client schedule.',
+        evidenceItemIds: [SEED_IDS.bedroomPhotoEvidence],
+      },
+      audit,
+    );
+  }
+  if (lossSchedule.status === 'draft') {
+    const gapIds = lossSchedule.items
+      .filter(({ evidenceStatus }) => ['partial', 'missing'].includes(evidenceStatus))
+      .map(({ id }) => id);
+    quantum.approveLossSchedule(
+      partner,
+      SEED_IDS.northstarMatter,
+      lossSchedule.id,
+      {
+        expectedVersion: lossSchedule.recordVersion,
+        idempotencyKey: 'seed-loss-schedule-approved',
+        approvalNote: 'Marcus Reed reviewed the calculations and explicitly acknowledged the partial evidence.',
+        acknowledgedEvidenceGapItemIds: gapIds,
+      },
+      audit,
+    );
+  }
+
+  quantumWorkspace = quantum.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (quantumWorkspace.generalDamagesReviews.length === 0) {
+    quantum.createGeneralDamagesReview(
+      partner,
+      SEED_IDS.northstarMatter,
+      {
+        idempotencyKey: 'seed-general-damages-review',
+        valuationOn: '2026-08-20',
+        lowMinor: 200_000,
+        highMinor: 350_000,
+        preferredMinor: 275_000,
+        basis: 'Human solicitor review of the synthetic expert and client evidence for pilot evaluation.',
+        authorities: ['Current authorities and Judicial College materials must be rechecked before reliance.'],
+        evidenceItemIds: [SEED_IDS.bedroomPhotoEvidence, SEED_IDS.repairEvidence],
+        reviewNote: 'This is a human-entered evaluation range, not an AI-generated legal valuation.',
+        supersedesReviewId: null,
+        nonePresentlyAdvanced: false,
+      },
+      audit,
+    );
+  }
+
+  quantumWorkspace = quantum.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (quantumWorkspace.openOffers.length === 0) {
+    quantum.createOffer(
+      user,
+      SEED_IDS.northstarMatter,
+      {
+        idempotencyKey: 'seed-open-protocol-offer',
+        direction: 'defendant',
+        offerType: 'protocol_compensation',
+        confidentiality: 'open',
+        scope: 'whole_claim',
+        scopeDescription: 'Synthetic open proposal covering works and compensation.',
+        damagesMinor: 300_000,
+        costsMinor: null,
+        totalMinor: null,
+        currency: 'GBP',
+        worksTerms: 'Complete the approved synthetic works schedule within 28 days.',
+        nonMoneyTerms: '',
+        interestTreatment: '',
+        writtenOfferDocumentVersionId: null,
+        madeOn: '2026-08-07',
+        part36: null,
+      },
+      audit,
+    );
+  }
+  let protectedOffers = quantum.getProtectedOffers(user, SEED_IDS.northstarMatter);
+  let protectedOffer = protectedOffers[0];
+  if (!protectedOffer) {
+    protectedOffer = quantum.createOffer(
+      user,
+      SEED_IDS.northstarMatter,
+      {
+        idempotencyKey: 'seed-protected-part36-offer',
+        direction: 'defendant',
+        offerType: 'part_36',
+        confidentiality: 'protected_costs',
+        scope: 'whole_claim',
+        scopeDescription: 'Synthetic Part 36 terms for the whole damages claim.',
+        damagesMinor: 450_000,
+        costsMinor: null,
+        totalMinor: null,
+        currency: 'GBP',
+        worksTerms: 'Complete the approved synthetic works schedule within 28 days.',
+        nonMoneyTerms: '',
+        interestTreatment: 'Inclusive of interest to the date of the fictional offer.',
+        writtenOfferDocumentVersionId: SEED_IDS.complaintVersion,
+        madeOn: '2026-08-10',
+        part36: {
+          relevantPeriodDays: 21,
+          relevantPeriodBasis: 'Calendar-day projection for solicitor review; no legal conclusion is generated.',
+          includesCounterclaim: false,
+          paymentPeriodDays: 14,
+        },
+      },
+      audit,
+    );
+  }
+  if (protectedOffer.part36?.validationStatus === 'unreviewed') {
+    quantum.reviewPart36(
+      partner,
+      SEED_IDS.northstarMatter,
+      protectedOffer.id,
+      {
+        expectedVersion: protectedOffer.recordVersion,
+        idempotencyKey: 'seed-part36-human-review',
+        serviceOn: '2026-08-10',
+        serviceConfirmed: true,
+        validationStatus: 'reviewed',
+        validationNote: 'Marcus Reed confirmed the recorded service date and reviewed the projected period.',
+      },
+      audit,
+    );
   }
 }

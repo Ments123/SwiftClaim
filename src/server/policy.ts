@@ -25,6 +25,13 @@ export type Capability =
   | 'protocol.approve'
   | 'protocol.override_conflict'
   | 'protocol.review_report'
+  | 'quantum.read'
+  | 'quantum.write'
+  | 'quantum.approve'
+  | 'offers.read_open'
+  | 'offers.read_protected'
+  | 'offers.write'
+  | 'offers.record_outcome'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -44,6 +51,13 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'protocol.approve',
     'protocol.override_conflict',
     'protocol.review_report',
+    'quantum.read',
+    'quantum.write',
+    'quantum.approve',
+    'offers.read_open',
+    'offers.read_protected',
+    'offers.write',
+    'offers.record_outcome',
     'administration.view',
   ],
   partner: [
@@ -62,6 +76,13 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'protocol.approve',
     'protocol.override_conflict',
     'protocol.review_report',
+    'quantum.read',
+    'quantum.write',
+    'quantum.approve',
+    'offers.read_open',
+    'offers.read_protected',
+    'offers.write',
+    'offers.record_outcome',
     'administration.view',
   ],
   solicitor: [
@@ -76,6 +97,12 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'protocol.prepare',
     'protocol.approve',
     'protocol.review_report',
+    'quantum.read',
+    'quantum.write',
+    'offers.read_open',
+    'offers.read_protected',
+    'offers.write',
+    'offers.record_outcome',
   ],
   paralegal: [
     'matter.read',
@@ -85,6 +112,10 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'intake.read',
     'intake.write',
     'protocol.prepare',
+    'quantum.read',
+    'quantum.write',
+    'offers.read_open',
+    'offers.write',
   ],
   finance: ['matter.read'],
   readonly: ['matter.read'],

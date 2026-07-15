@@ -930,6 +930,443 @@ export const recordExpertQuestionAnswerSchema = z.object({
   documentVersionId: z.string().uuid(),
 });
 
+const quantumDateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const quantumNullableDateSchema = quantumDateOnlySchema.nullable();
+const quantumNullableUuidSchema = z.string().uuid().nullable();
+const quantumIdempotencyKeySchema = z.string().trim().min(8).max(200);
+const quantumMoneySchema = z.number().int().nonnegative().safe();
+const quantumNullableMoneySchema = quantumMoneySchema.nullable();
+const quantumLineageKeySchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9_-]*$/)
+  .min(3)
+  .max(120);
+
+const workItemSchema = z
+  .object({
+    lineageKey: quantumLineageKeySchema,
+    area: z.string().trim().min(2).max(200),
+    description: z.string().trim().min(10).max(4_000),
+    responsibilityPosition: z.enum(['agreed', 'disputed', 'unknown']),
+    priority: z.enum(['urgent', 'high', 'routine']),
+    targetStartOn: quantumNullableDateSchema,
+    targetCompletionOn: quantumNullableDateSchema,
+    estimatedCostMinor: quantumNullableMoneySchema,
+    contractor: z.string().trim().max(240).default(''),
+    sourceNote: z.string().trim().min(5).max(2_000),
+    defectIds: z.array(z.string().uuid()).max(100).default([]),
+    evidenceItemIds: z.array(z.string().uuid()).max(100).default([]),
+  })
+  .strict()
+  .refine(
+    ({ targetStartOn, targetCompletionOn }) =>
+      !targetStartOn || !targetCompletionOn || targetCompletionOn >= targetStartOn,
+    {
+      message: 'The target completion date must not be before the start date.',
+      path: ['targetCompletionOn'],
+    },
+  );
+
+export const createWorkScheduleSchema = z
+  .object({
+    title: z.string().trim().min(5).max(240),
+    sourceType: z.enum([
+      'expert_report',
+      'agreed_schedule',
+      'landlord_response',
+      'solicitor_review',
+      'other',
+    ]),
+    sourceDocumentVersionId: quantumNullableUuidSchema,
+    basedOnScheduleId: quantumNullableUuidSchema,
+    items: z.array(workItemSchema).min(1).max(250),
+  })
+  .strict()
+  .refine(
+    ({ items }) => new Set(items.map(({ lineageKey }) => lineageKey)).size === items.length,
+    { message: 'Work item lineage keys must be unique.', path: ['items'] },
+  );
+
+export const approveWorkScheduleSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    idempotencyKey: quantumIdempotencyKeySchema,
+    approvalNote: z.string().trim().min(10).max(2_000),
+    acknowledgedWarningKeys: z
+      .array(z.string().trim().min(2).max(120))
+      .max(100)
+      .default([]),
+  })
+  .strict();
+
+export const createRepairEventSchema = z
+  .object({
+    idempotencyKey: quantumIdempotencyKeySchema,
+    eventType: z.enum([
+      'proposed',
+      'appointment_booked',
+      'access_offered',
+      'access_provided',
+      'access_refused',
+      'access_unavailable',
+      'started',
+      'paused',
+      'completion_asserted',
+      'client_disputes_completion',
+      'failed_inspection',
+      'verified_complete',
+      'superseded',
+    ]),
+    occurredAt: z.string().datetime({ offset: true }),
+    actorType: z.enum([
+      'client',
+      'landlord',
+      'contractor',
+      'expert',
+      'solicitor',
+      'other',
+    ]),
+    note: z.string().trim().min(5).max(4_000),
+    appointmentFrom: z.string().datetime({ offset: true }).nullable(),
+    appointmentTo: z.string().datetime({ offset: true }).nullable(),
+    evidenceItemIds: z.array(z.string().uuid()).max(100).default([]),
+    verifier: z.string().trim().max(240).default(''),
+    supersedesEventId: quantumNullableUuidSchema,
+    correctionReason: z.string().trim().max(2_000).default(''),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (
+      input.eventType === 'verified_complete' &&
+      (!input.verifier || input.evidenceItemIds.length === 0)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Verified completion requires a verifier and completion evidence.',
+        path: ['verifier'],
+      });
+    }
+    if (input.eventType === 'superseded' && !input.supersedesEventId) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A superseding event must identify the corrected event.',
+        path: ['supersedesEventId'],
+      });
+    }
+    if (input.supersedesEventId && input.correctionReason.length < 10) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A correction reason of at least 10 characters is required.',
+        path: ['correctionReason'],
+      });
+    }
+    if (
+      input.appointmentFrom &&
+      input.appointmentTo &&
+      input.appointmentTo <= input.appointmentFrom
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'The appointment end must be after its start.',
+        path: ['appointmentTo'],
+      });
+    }
+  });
+
+export const createLossScheduleSchema = z
+  .object({
+    title: z.string().trim().min(5).max(240),
+    valuationOn: quantumDateOnlySchema,
+    currency: z.literal('GBP'),
+    basedOnScheduleId: quantumNullableUuidSchema,
+    notes: z.string().trim().max(4_000).default(''),
+  })
+  .strict();
+
+const lossItemFields = {
+  lineageKey: quantumLineageKeySchema,
+  category: z.enum([
+    'damaged_belongings',
+    'additional_heating',
+    'cleaning',
+    'temporary_accommodation',
+    'travel',
+    'medical_expense',
+    'loss_of_earnings',
+    'other',
+  ]),
+  description: z.string().trim().min(5).max(4_000),
+  periodStartOn: quantumNullableDateSchema,
+  periodEndOn: quantumNullableDateSchema,
+  calculationType: z.enum(['fixed', 'quantity_rate', 'period_rate', 'manual']),
+  quantity: z
+    .string()
+    .trim()
+    .regex(/^(?:0|[1-9]\d*)(?:\.\d{1,4})?$/)
+    .nullable(),
+  unitLabel: z.string().trim().max(80).default(''),
+  rateMinor: quantumNullableMoneySchema,
+  fixedAmountMinor: quantumNullableMoneySchema,
+  manualAmountMinor: quantumNullableMoneySchema,
+  manualBasis: z.string().trim().max(2_000).default(''),
+  position: z.enum(['claimed', 'accepted', 'disputed', 'withdrawn']),
+  evidenceStatus: z.enum(['supported', 'partial', 'missing', 'not_applicable']),
+  sourceNote: z.string().trim().min(5).max(2_000),
+  evidenceItemIds: z.array(z.string().uuid()).max(100).default([]),
+};
+
+function validateLossCalculation(
+  input: {
+    calculationType: string;
+    quantity: string | null;
+    unitLabel: string;
+    rateMinor: number | null;
+    fixedAmountMinor: number | null;
+    manualAmountMinor: number | null;
+    manualBasis: string;
+    periodStartOn: string | null;
+    periodEndOn: string | null;
+  },
+  context: z.RefinementCtx,
+) {
+  if (
+    ['quantity_rate', 'period_rate'].includes(input.calculationType) &&
+    (!input.quantity || !input.unitLabel || input.rateMinor === null)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Quantity calculations require quantity, unit and rate.',
+      path: ['quantity'],
+    });
+  }
+  if (input.calculationType === 'fixed' && input.fixedAmountMinor === null) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A fixed calculation requires a fixed amount.',
+      path: ['fixedAmountMinor'],
+    });
+  }
+  if (
+    input.calculationType === 'manual' &&
+    (input.manualAmountMinor === null || input.manualBasis.length < 10)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A manual amount requires an amount and review basis.',
+      path: ['manualBasis'],
+    });
+  }
+  if (
+    input.periodStartOn &&
+    input.periodEndOn &&
+    input.periodEndOn < input.periodStartOn
+  ) {
+    context.addIssue({
+      code: 'custom',
+      message: 'The loss period end must not precede its start.',
+      path: ['periodEndOn'],
+    });
+  }
+}
+
+export const createLossItemSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    ...lossItemFields,
+  })
+  .strict()
+  .superRefine(validateLossCalculation);
+
+export const updateLossItemSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    ...lossItemFields,
+  })
+  .strict()
+  .superRefine(validateLossCalculation);
+
+export const approveLossScheduleSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    idempotencyKey: quantumIdempotencyKeySchema,
+    approvalNote: z.string().trim().min(10).max(2_000),
+    acknowledgedEvidenceGapItemIds: z
+      .array(z.string().uuid())
+      .max(250)
+      .default([]),
+  })
+  .strict();
+
+export const createGeneralDamagesReviewSchema = z
+  .object({
+    idempotencyKey: quantumIdempotencyKeySchema,
+    valuationOn: quantumDateOnlySchema,
+    lowMinor: quantumMoneySchema,
+    highMinor: quantumMoneySchema,
+    preferredMinor: quantumNullableMoneySchema,
+    basis: z.string().trim().min(10).max(6_000),
+    authorities: z.array(z.string().trim().min(3).max(1_000)).max(100),
+    evidenceItemIds: z.array(z.string().uuid()).max(100),
+    reviewNote: z.string().trim().min(10).max(2_000),
+    supersedesReviewId: quantumNullableUuidSchema,
+    nonePresentlyAdvanced: z.boolean(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.highMinor < input.lowMinor) {
+      context.addIssue({
+        code: 'custom',
+        message: 'The high value must not be below the low value.',
+        path: ['highMinor'],
+      });
+    }
+    if (
+      input.preferredMinor !== null &&
+      (input.preferredMinor < input.lowMinor || input.preferredMinor > input.highMinor)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'The preferred value must fall within the reviewed range.',
+        path: ['preferredMinor'],
+      });
+    }
+    if (
+      input.nonePresentlyAdvanced &&
+      (input.lowMinor !== 0 || input.highMinor !== 0 || input.preferredMinor !== null)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'No current claim must use a zero range without a preferred value.',
+        path: ['nonePresentlyAdvanced'],
+      });
+    }
+  });
+
+const part36OfferTermsSchema = z
+  .object({
+    relevantPeriodDays: z.number().int().min(21).max(365),
+    relevantPeriodBasis: z.string().trim().min(10).max(2_000),
+    includesCounterclaim: z.boolean(),
+    paymentPeriodDays: z.number().int().positive().max(365),
+  })
+  .strict();
+
+export const createOfferSchema = z
+  .object({
+    idempotencyKey: quantumIdempotencyKeySchema,
+    direction: z.enum(['claimant', 'defendant']),
+    offerType: z.enum([
+      'part_36',
+      'wpsatc',
+      'open',
+      'protocol_compensation',
+      'costs_only',
+      'global',
+    ]),
+    confidentiality: z.enum(['open', 'protected_costs', 'protected_negotiation']),
+    scope: z.enum(['whole_claim', 'part_of_claim', 'issue']),
+    scopeDescription: z.string().trim().min(5).max(2_000),
+    damagesMinor: quantumNullableMoneySchema,
+    costsMinor: quantumNullableMoneySchema,
+    totalMinor: quantumNullableMoneySchema,
+    currency: z.literal('GBP'),
+    worksTerms: z.string().trim().max(4_000).default(''),
+    nonMoneyTerms: z.string().trim().max(4_000).default(''),
+    interestTreatment: z.string().trim().max(2_000).default(''),
+    writtenOfferDocumentVersionId: quantumNullableUuidSchema,
+    madeOn: quantumDateOnlySchema,
+    part36: part36OfferTermsSchema.nullable(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.offerType === 'part_36') {
+      if (input.confidentiality !== 'protected_costs') {
+        context.addIssue({
+          code: 'custom',
+          message: 'A Part 36 offer must use protected-costs confidentiality.',
+          path: ['confidentiality'],
+        });
+      }
+      if (!input.part36 || !input.writtenOfferDocumentVersionId) {
+        context.addIssue({
+          code: 'custom',
+          message: 'A Part 36 record requires written terms and a retained document.',
+          path: ['part36'],
+        });
+      }
+    } else if (input.part36) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Part 36 terms can only be attached to a Part 36 offer.',
+        path: ['part36'],
+      });
+    }
+    if (
+      input.offerType === 'wpsatc' &&
+      input.confidentiality !== 'protected_costs'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A WPSATC offer must use protected-costs confidentiality.',
+        path: ['confidentiality'],
+      });
+    }
+  });
+
+export const recordOfferEventSchema = z
+  .object({
+    idempotencyKey: quantumIdempotencyKeySchema,
+    eventType: z.enum([
+      'made',
+      'served',
+      'clarified',
+      'improved',
+      'withdrawn',
+      'accepted',
+      'rejected',
+      'not_accepted',
+      'superseded',
+    ]),
+    occurredAt: z.string().datetime({ offset: true }),
+    note: z.string().trim().min(10).max(4_000),
+    sourceDocumentVersionId: quantumNullableUuidSchema,
+    supersedesEventId: quantumNullableUuidSchema,
+    correctionReason: z.string().trim().max(2_000).default(''),
+    explicitConfirmation: z.boolean(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (
+      ['accepted', 'withdrawn'].includes(input.eventType) &&
+      !input.explicitConfirmation
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'This outcome requires explicit confirmation.',
+        path: ['explicitConfirmation'],
+      });
+    }
+    if (input.supersedesEventId && input.correctionReason.length < 10) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A correction reason of at least 10 characters is required.',
+        path: ['correctionReason'],
+      });
+    }
+  });
+
+export const reviewPart36Schema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    idempotencyKey: quantumIdempotencyKeySchema,
+    serviceOn: quantumDateOnlySchema,
+    serviceConfirmed: z.literal(true),
+    validationStatus: z.enum(['reviewed', 'not_valid']),
+    validationNote: z.string().trim().min(10).max(2_000),
+  })
+  .strict();
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -970,6 +1407,17 @@ export type RecordExpertMilestoneInput = z.infer<typeof recordExpertMilestoneSch
 export type RecordExpertReportInput = z.infer<typeof recordExpertReportSchema>;
 export type RecordExpertQuestionInput = z.infer<typeof recordExpertQuestionSchema>;
 export type RecordExpertQuestionAnswerInput = z.infer<typeof recordExpertQuestionAnswerSchema>;
+export type CreateWorkScheduleInput = z.infer<typeof createWorkScheduleSchema>;
+export type ApproveWorkScheduleInput = z.infer<typeof approveWorkScheduleSchema>;
+export type CreateRepairEventInput = z.infer<typeof createRepairEventSchema>;
+export type CreateLossScheduleInput = z.infer<typeof createLossScheduleSchema>;
+export type CreateLossItemInput = z.infer<typeof createLossItemSchema>;
+export type UpdateLossItemInput = z.infer<typeof updateLossItemSchema>;
+export type ApproveLossScheduleInput = z.infer<typeof approveLossScheduleSchema>;
+export type CreateGeneralDamagesReviewInput = z.infer<typeof createGeneralDamagesReviewSchema>;
+export type CreateOfferInput = z.infer<typeof createOfferSchema>;
+export type RecordOfferEventInput = z.infer<typeof recordOfferEventSchema>;
+export type ReviewPart36Input = z.infer<typeof reviewPart36Schema>;
 
 export interface ApiErrorBody {
   error: {
