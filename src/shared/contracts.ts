@@ -1367,6 +1367,246 @@ export const reviewPart36Schema = z
   })
   .strict();
 
+export const communicationChannelSchema = z.enum([
+  'email',
+  'whatsapp',
+  'telephone',
+  'letter',
+  'portal',
+  'sms',
+  'in_person',
+  'internal',
+]);
+
+export const communicationConfidentialitySchema = z.enum([
+  'ordinary',
+  'internal',
+  'privileged',
+  'protected_negotiation',
+]);
+
+export const communicationDirectionSchema = z.enum([
+  'inbound',
+  'outbound',
+  'internal',
+]);
+
+export const communicationParticipantSchema = z
+  .object({
+    role: z.enum([
+      'from',
+      'to',
+      'cc',
+      'bcc',
+      'caller',
+      'callee',
+      'attendee',
+      'author',
+      'recipient',
+    ]),
+    displayName: z.string().trim().min(1).max(200),
+    endpointType: z.enum([
+      'email',
+      'phone',
+      'whatsapp',
+      'postal_address',
+      'portal',
+      'user',
+      'unknown',
+    ]),
+    endpoint: z.string().trim().min(1).max(500),
+    partyId: z.string().uuid().nullable().optional().default(null),
+    userId: z.string().uuid().nullable().optional().default(null),
+  })
+  .strict();
+
+const communicationIdempotencyKeySchema = z
+  .string()
+  .trim()
+  .min(8)
+  .max(200);
+const communicationUuidListSchema = z.array(z.string().uuid()).max(50);
+const communicationContentFields = {
+  channel: communicationChannelSchema,
+  confidentiality: communicationConfidentialitySchema,
+  participants: z.array(communicationParticipantSchema).min(1).max(100),
+  subject: z.string().trim().max(500).default(''),
+  body: z.string().trim().min(1).max(100_000),
+  bodyFormat: z.enum(['plain', 'html', 'structured_note']),
+  attachmentVersionIds: communicationUuidListSchema.default([]),
+};
+
+function validateInternalCommunication(
+  input: {
+    channel: z.infer<typeof communicationChannelSchema>;
+    confidentiality: z.infer<typeof communicationConfidentialitySchema>;
+    participants: Array<z.infer<typeof communicationParticipantSchema>>;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (input.channel !== 'internal') return;
+  if (!['internal', 'privileged'].includes(input.confidentiality)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['confidentiality'],
+      message: 'Internal communications must use internal or privileged confidentiality.',
+    });
+  }
+  if (input.participants.some(({ endpointType }) => endpointType !== 'user')) {
+    context.addIssue({
+      code: 'custom',
+      path: ['participants'],
+      message: 'Internal communications can only address firm users.',
+    });
+  }
+}
+
+export const recordCommunicationSchema = z
+  .object({
+    idempotencyKey: communicationIdempotencyKeySchema,
+    ...communicationContentFields,
+    direction: communicationDirectionSchema,
+    occurredAt: z.string().datetime({ offset: true }),
+    source: z.enum(['manual', 'provider', 'import', 'system']),
+    providerKey: z.string().trim().min(1).max(80).nullable(),
+    externalMessageId: z.string().trim().min(1).max(500).nullable(),
+    externalThreadId: z.string().trim().min(1).max(500).nullable(),
+    conversationId: z.string().uuid().nullable().optional().default(null),
+    supersedesEntryId: z.string().uuid().nullable(),
+    correctionReason: z.string().trim().max(2_000).default(''),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    validateInternalCommunication(input, context);
+    if (input.channel === 'internal' && input.direction !== 'internal') {
+      context.addIssue({
+        code: 'custom',
+        path: ['direction'],
+        message: 'Internal communications must use internal direction.',
+      });
+    }
+    if (input.supersedesEntryId && input.correctionReason.length < 10) {
+      context.addIssue({
+        code: 'custom',
+        path: ['correctionReason'],
+        message: 'A correction reason of at least 10 characters is required.',
+      });
+    }
+  });
+
+export const createCommunicationDraftSchema = z
+  .object({ ...communicationContentFields, conversationId: z.string().uuid().nullable().optional().default(null) })
+  .strict()
+  .superRefine(validateInternalCommunication);
+
+export const appendCommunicationDraftVersionSchema = z
+  .object({ expectedVersion: z.number().int().positive(), ...communicationContentFields })
+  .strict()
+  .superRefine(validateInternalCommunication);
+
+export const submitCommunicationDraftSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    idempotencyKey: communicationIdempotencyKeySchema,
+    note: z.string().trim().min(10).max(2_000),
+  })
+  .strict();
+
+export const decideCommunicationDraftSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    draftVersionId: z.string().uuid(),
+    idempotencyKey: communicationIdempotencyKeySchema,
+    decision: z.enum(['approved', 'rejected', 'approval_revoked']),
+    note: z.string().trim().min(10).max(2_000),
+  })
+  .strict();
+
+export const dispatchCommunicationSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    idempotencyKey: communicationIdempotencyKeySchema,
+    providerKey: z.string().regex(/^[a-z][a-z0-9_-]*$/).max(80),
+    confirmed: z.literal(true),
+  })
+  .strict();
+
+export const recordCommunicationProviderEventSchema = z
+  .object({
+    providerEventId: z.string().trim().min(1).max(500),
+    eventType: z.enum([
+      'queued',
+      'attempting',
+      'provider_accepted',
+      'delivered',
+      'failed',
+      'read',
+      'cancelled',
+    ]),
+    occurredAt: z.string().datetime({ offset: true }),
+    signature: z.string().trim().min(8).max(500),
+    safePayload: z.record(z.string(), z.unknown()).default({}),
+  })
+  .strict();
+
+export const recordCommunicationCallSchema = z
+  .object({
+    idempotencyKey: communicationIdempotencyKeySchema,
+    channel: z.enum(['telephone', 'whatsapp']),
+    confidentiality: communicationConfidentialitySchema,
+    direction: z.enum(['inbound', 'outbound']),
+    participants: z.array(communicationParticipantSchema).min(1).max(25),
+    occurredAt: z.string().datetime({ offset: true }),
+    subject: z.string().trim().max(500).default(''),
+    body: z.string().trim().min(1).max(100_000),
+    startedAt: z.string().datetime({ offset: true }),
+    endedAt: z.string().datetime({ offset: true }),
+    purpose: z.string().trim().min(3).max(2_000),
+    outcome: z.string().trim().min(3).max(4_000),
+    identityCheckStatus: z.enum(['not_recorded', 'confirmed', 'failed']),
+    identityCheckNote: z.string().trim().max(2_000).default(''),
+    recordingStatus: z.enum([
+      'not_recorded',
+      'notice_given',
+      'consent_recorded',
+      'recorded',
+      'unavailable',
+    ]),
+    noticeConsentBasis: z.string().trim().max(2_000).default(''),
+    attachmentVersionIds: communicationUuidListSchema.default([]),
+    recordingVersionIds: communicationUuidListSchema.default([]),
+    transcriptVersionIds: communicationUuidListSchema.default([]),
+    callNoteVersionIds: communicationUuidListSchema.default([]),
+    providerKey: z.string().trim().min(1).max(80).nullable().optional().default(null),
+    externalCallId: z.string().trim().min(1).max(500).nullable().optional().default(null),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (new Date(input.endedAt) < new Date(input.startedAt)) {
+      context.addIssue({ code: 'custom', path: ['endedAt'], message: 'The call end cannot precede its start.' });
+    }
+    if (
+      input.recordingVersionIds.length > 0 &&
+      !['notice_given', 'consent_recorded', 'recorded'].includes(input.recordingStatus)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['recordingStatus'],
+        message: 'A recording artifact requires notice or consent metadata.',
+      });
+    }
+    if (
+      ['notice_given', 'consent_recorded', 'recorded'].includes(input.recordingStatus) &&
+      input.noticeConsentBasis.length < 10
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['noticeConsentBasis'],
+        message: 'Record the notice or consent basis.',
+      });
+    }
+  });
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -1418,6 +1658,18 @@ export type CreateGeneralDamagesReviewInput = z.infer<typeof createGeneralDamage
 export type CreateOfferInput = z.infer<typeof createOfferSchema>;
 export type RecordOfferEventInput = z.infer<typeof recordOfferEventSchema>;
 export type ReviewPart36Input = z.infer<typeof reviewPart36Schema>;
+export type CommunicationChannel = z.infer<typeof communicationChannelSchema>;
+export type CommunicationConfidentiality = z.infer<typeof communicationConfidentialitySchema>;
+export type CommunicationDirection = z.infer<typeof communicationDirectionSchema>;
+export type CommunicationParticipantInput = z.infer<typeof communicationParticipantSchema>;
+export type RecordCommunicationInput = z.infer<typeof recordCommunicationSchema>;
+export type CreateCommunicationDraftInput = z.infer<typeof createCommunicationDraftSchema>;
+export type AppendCommunicationDraftVersionInput = z.infer<typeof appendCommunicationDraftVersionSchema>;
+export type SubmitCommunicationDraftInput = z.infer<typeof submitCommunicationDraftSchema>;
+export type DecideCommunicationDraftInput = z.infer<typeof decideCommunicationDraftSchema>;
+export type DispatchCommunicationInput = z.infer<typeof dispatchCommunicationSchema>;
+export type RecordCommunicationProviderEventInput = z.infer<typeof recordCommunicationProviderEventSchema>;
+export type RecordCommunicationCallInput = z.infer<typeof recordCommunicationCallSchema>;
 
 export interface ApiErrorBody {
   error: {

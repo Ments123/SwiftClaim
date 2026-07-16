@@ -166,6 +166,11 @@ describe('canonical database', () => {
         name: 'repairs quantum and offers',
         checksumLength: 64,
       },
+      {
+        version: 7,
+        name: 'governed communications',
+        checksumLength: 64,
+      },
     ]);
   });
 

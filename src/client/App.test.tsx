@@ -359,6 +359,55 @@ describe('SwiftClaim client', () => {
     );
   });
 
+  it('lazy-loads the governed communications workspace from the matter rail', async () => {
+    const communicationsWorkspace = {
+      matterId: matterFixture.id,
+      permissions: {
+        canWrite: true,
+        canApprove: false,
+        canSend: true,
+        canReadPrivileged: true,
+        canReadProtected: true,
+        canManageProvider: false,
+      },
+      counts: { total: 0, inbound: 0, outbound: 0, drafts: 0 },
+      entries: [],
+      drafts: [],
+      providerCapabilities: [{
+        key: 'evaluation',
+        operations: {
+          send_email: true,
+          send_whatsapp_message: true,
+          start_whatsapp_call: false,
+          receive_events: true,
+          delivery_receipts: false,
+        },
+        reasons: { start_whatsapp_call: 'Not enabled for the evaluation provider.' },
+      }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/me') return json({ user: userFixture });
+      if (url === '/api/dashboard') return json(dashboardFixture);
+      if (url === `/api/matters/${matterFixture.id}/summary`) return json(summaryFixture);
+      if (url === `/api/matters/${matterFixture.id}`) return json(aggregateFixture);
+      if (url === `/api/matters/${matterFixture.id}/communications`) return json(communicationsWorkspace);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await userEvent.click(await screen.findByText(matterFixture.reference));
+    await userEvent.click(await screen.findByRole('button', { name: /communications/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Communications' })).toBeVisible();
+    expect(screen.getByText('No matching communications')).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/matters/${matterFixture.id}/communications`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it('surfaces a generic failed-login response without clearing the email', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

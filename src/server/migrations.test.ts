@@ -19,10 +19,50 @@ describe('runMigrations', () => {
       { version: 4, name: 'defects notice and evidence' },
       { version: 5, name: 'protocol and experts' },
       { version: 6, name: 'repairs quantum and offers' },
+      { version: 7, name: 'governed communications' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates governed communication tables with immutable event guards', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-16T09:00:00.000Z');
+
+    const tableNames = (database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(tableNames).toEqual(expect.arrayContaining([
+      'communication_conversations',
+      'communication_participants',
+      'communication_entries',
+      'communication_attachments',
+      'communication_drafts',
+      'communication_draft_versions',
+      'communication_approval_events',
+      'communication_dispatches',
+      'communication_provider_events',
+      'communication_call_sessions',
+      'communication_service_assertions',
+      'communication_command_receipts',
+    ]));
+
+    const triggerNames = (database
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'trigger' AND name LIKE 'communication_%'`,
+      )
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'communication_entries_no_update',
+      'communication_entries_no_delete',
+      'communication_draft_versions_no_update',
+      'communication_approval_events_no_delete',
+      'communication_provider_events_no_update',
+      'communication_attachments_no_delete',
+      'communication_service_assertions_no_update',
+    ]));
   });
 
   it('creates repairs quantum and offer tables with immutable legal records', () => {

@@ -60,4 +60,18 @@ describe('role capabilities', () => {
     expect(hasCapability(user('finance'), 'quantum.read')).toBe(false);
     expect(hasCapability(user('readonly'), 'offers.read_open')).toBe(false);
   });
+
+  it('separates communication preparation, dispatch, approval and restricted access', () => {
+    expect(hasCapability(user('partner'), 'communications.approve')).toBe(true);
+    expect(hasCapability(user('partner'), 'communications.manage_provider')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'communications.send')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'communications.read_privileged')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'communications.approve')).toBe(false);
+    expect(hasCapability(user('paralegal'), 'communications.write')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'communications.send')).toBe(false);
+    expect(hasCapability(user('paralegal'), 'communications.read_protected')).toBe(false);
+    expect(hasCapability(user('finance'), 'communications.read')).toBe(false);
+    expect(hasCapability(user('readonly'), 'communications.read')).toBe(true);
+    expect(hasCapability(user('readonly'), 'communications.write')).toBe(false);
+  });
 });

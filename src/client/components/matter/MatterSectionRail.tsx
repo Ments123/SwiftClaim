@@ -55,7 +55,7 @@ const SECTION_ITEMS: ReadonlyArray<{
     id: 'communications',
     label: 'Communications',
     icon: Mail,
-    available: false,
+    available: true,
   },
   {
     id: 'protocol_experts',

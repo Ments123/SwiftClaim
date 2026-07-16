@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { buildApp } from './app.js';
 import {
   createDatabase,
+  seedCommunicationsEvaluation,
   seedDatabase,
   seedProtocolExpertsEvaluation,
   seedRepairsQuantumEvaluation,
@@ -13,6 +14,7 @@ const host = process.env.HOST ?? '127.0.0.1';
 const port = Number.parseInt(process.env.PORT ?? '4100', 10);
 const environment = process.env.NODE_ENV ?? 'development';
 const isProduction = environment === 'production';
+const communicationProvider = process.env.COMMUNICATION_PROVIDER ?? 'evaluation';
 const dataDirectory = resolve(process.env.DATA_DIR ?? './data');
 const databasePath = resolve(
   process.env.DATABASE_PATH ?? `${dataDirectory}/swiftclaim.sqlite`,
@@ -24,6 +26,9 @@ const clientPath = resolve('./dist/client');
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error('PORT must be an integer between 1 and 65535.');
+}
+if (communicationProvider !== 'evaluation') {
+  throw new Error('COMMUNICATION_PROVIDER must be evaluation in this build.');
 }
 
 mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
@@ -37,6 +42,7 @@ if (shouldSeed) {
   seedDatabase(database);
   await seedProtocolExpertsEvaluation(database, storagePath);
   seedRepairsQuantumEvaluation(database);
+  await seedCommunicationsEvaluation(database);
 }
 
 const app = await buildApp({

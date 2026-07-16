@@ -6,6 +6,7 @@ import { intakeOnboardingMigration } from './003-intake-onboarding.js';
 import { defectsNoticeEvidenceMigration } from './004-defects-notice-evidence.js';
 import { protocolExpertsMigration } from './005-protocol-experts.js';
 import { repairsQuantumMigration } from './006-repairs-quantum.js';
+import { communicationsMigration } from './007-communications.js';
 import type { Migration } from './types.js';
 
 export const migrations: Migration[] = [
@@ -15,6 +16,7 @@ export const migrations: Migration[] = [
   defectsNoticeEvidenceMigration,
   protocolExpertsMigration,
   repairsQuantumMigration,
+  communicationsMigration,
 ];
 
 export function runMigrations(

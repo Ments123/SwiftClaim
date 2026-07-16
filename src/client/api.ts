@@ -870,6 +870,162 @@ export interface RepairsQuantumWorkspace {
   };
 }
 
+export type CommunicationChannel =
+  | 'email'
+  | 'whatsapp'
+  | 'telephone'
+  | 'letter'
+  | 'portal'
+  | 'sms'
+  | 'in_person'
+  | 'internal';
+
+export interface CommunicationParticipant {
+  role: string;
+  displayName: string;
+  endpointType: string;
+  endpoint: string;
+  partyId: string | null;
+  userId: string | null;
+}
+
+export interface CommunicationTransport {
+  state: string;
+  providerAcceptedAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedAt: string | null;
+  producingEventId: string | null;
+}
+
+export interface CommunicationAttachment {
+  documentVersionId: string;
+  purpose: string;
+  fileName: string;
+  sha256: string;
+}
+
+export interface CommunicationEntry {
+  id: string;
+  conversationId: string;
+  channel: CommunicationChannel;
+  direction: 'inbound' | 'outbound' | 'internal';
+  confidentiality: 'ordinary' | 'internal' | 'privileged' | 'protected_negotiation';
+  participants: CommunicationParticipant[];
+  subject: string;
+  body: string;
+  bodyFormat: string;
+  occurredAt: string;
+  recordedAt: string;
+  recordedBy: string;
+  source: string;
+  providerKey: string | null;
+  externalMessageId: string | null;
+  externalThreadId: string | null;
+  supersedesEntryId: string | null;
+  correctionReason: string;
+  attachments: CommunicationAttachment[];
+  call: {
+    id: string;
+    providerKey: string;
+    startedAt: string;
+    endedAt: string;
+    durationSeconds: number;
+    purpose: string;
+    outcome: string;
+    identityCheckStatus: string;
+    identityCheckNote: string;
+    recordingStatus: string;
+    noticeConsentBasis: string;
+    externalCallId: string | null;
+  } | null;
+  serviceAssertion: {
+    id: string;
+    assertedMethod: string;
+    serviceAt: string;
+    recipient: string;
+    endpoint: string;
+    sourceDocumentVersionId: string | null;
+    factualNote: string;
+    reviewStatus: 'unreviewed' | 'reviewed' | 'disputed';
+    assertedBy: string;
+    assertedAt: string;
+    reviewedBy: string | null;
+    reviewedAt: string | null;
+  } | null;
+  transport: CommunicationTransport;
+}
+
+export interface CommunicationDraft {
+  id: string;
+  conversationId: string;
+  channel: CommunicationChannel;
+  confidentiality: CommunicationEntry['confidentiality'];
+  status: string;
+  recordVersion: number;
+  currentVersion: {
+    id: string;
+    version: number;
+    participants: CommunicationParticipant[];
+    subject: string;
+    body: string;
+    bodyFormat: string;
+    attachments: CommunicationAttachment[];
+    createdBy: string;
+    createdAt: string;
+  };
+  currentApproval: {
+    id: string;
+    decision: string;
+    note: string;
+    actorUserId: string;
+    occurredAt: string;
+  } | null;
+  dispatch: {
+    id: string;
+    providerKey: string;
+    status: string;
+    externalMessageId: string | null;
+    lastErrorCode: string | null;
+    lastErrorDetail: string | null;
+    createdAt: string;
+    lastEventAt: string;
+    transport: CommunicationTransport;
+  } | null;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface CommunicationProviderCapabilities {
+  key: string;
+  operations: {
+    send_email: boolean;
+    send_whatsapp_message: boolean;
+    start_whatsapp_call: boolean;
+    receive_events: boolean;
+    delivery_receipts: boolean;
+  };
+  reasons: Partial<Record<keyof CommunicationProviderCapabilities['operations'], string>>;
+}
+
+export interface CommunicationWorkspace {
+  matterId: string;
+  permissions: {
+    canWrite: boolean;
+    canApprove: boolean;
+    canSend: boolean;
+    canReadPrivileged: boolean;
+    canReadProtected: boolean;
+    canManageProvider: boolean;
+  };
+  counts: { total: number; inbound: number; outbound: number; drafts: number };
+  entries: CommunicationEntry[];
+  drafts: CommunicationDraft[];
+  providerCapabilities: CommunicationProviderCapabilities[];
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'
