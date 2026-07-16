@@ -74,4 +74,18 @@ describe('role capabilities', () => {
     expect(hasCapability(user('readonly'), 'communications.read')).toBe(true);
     expect(hasCapability(user('readonly'), 'communications.write')).toBe(false);
   });
+
+  it('separates negotiation preparation, protected access, approval and waiver', () => {
+    expect(hasCapability(user('partner'), 'negotiation.approve')).toBe(true);
+    expect(hasCapability(user('partner'), 'settlement.waive_obligation')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'negotiation.record_instruction')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'negotiation.read_protected')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'settlement.conclude')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'negotiation.approve')).toBe(false);
+    expect(hasCapability(user('paralegal'), 'negotiation.prepare')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'negotiation.approve')).toBe(false);
+    expect(hasCapability(user('paralegal'), 'negotiation.read_protected')).toBe(false);
+    expect(hasCapability(user('finance'), 'negotiation.read')).toBe(false);
+    expect(hasCapability(user('readonly'), 'negotiation.read')).toBe(false);
+  });
 });

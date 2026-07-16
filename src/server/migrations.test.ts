@@ -20,10 +20,55 @@ describe('runMigrations', () => {
       { version: 5, name: 'protocol and experts' },
       { version: 6, name: 'repairs quantum and offers' },
       { version: 7, name: 'governed communications' },
+      { version: 8, name: 'negotiation and settlement authority' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates negotiation and settlement tables with immutable authority records', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-16T12:00:00.000Z');
+
+    const tableNames = (database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(tableNames).toEqual(expect.arrayContaining([
+      'negotiation_reviews',
+      'client_instructions',
+      'settlement_authority_versions',
+      'negotiation_actions',
+      'negotiation_action_versions',
+      'negotiation_approval_events',
+      'negotiation_external_acts',
+      'settlements',
+      'settlement_term_versions',
+      'settlement_obligations',
+      'settlement_obligation_events',
+      'negotiation_command_receipts',
+    ]));
+
+    const triggerNames = (database
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'trigger'
+           AND (name LIKE 'negotiation_%'
+             OR name LIKE 'client_instruction%'
+             OR name LIKE 'settlement_%')`,
+      )
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'negotiation_reviews_no_update',
+      'client_instructions_no_delete',
+      'settlement_authority_versions_no_update',
+      'negotiation_action_versions_no_delete',
+      'negotiation_approval_events_no_update',
+      'negotiation_external_acts_no_delete',
+      'settlement_term_versions_no_update',
+      'settlement_obligation_events_no_delete',
+      'negotiation_command_receipts_no_update',
+    ]));
   });
 
   it('creates governed communication tables with immutable event guards', () => {

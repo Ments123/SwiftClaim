@@ -54,6 +54,7 @@ export interface WorkflowStageRecord {
   position: number;
   description: string;
   requiredChecklistKeys: string[];
+  allowedNextStageKeys: string[];
 }
 
 export interface WorkflowBlocker {
@@ -968,7 +969,8 @@ export class WorkflowStore {
       this.database
         .prepare(
           `SELECT ws.key, ws.name, ws.position, ws.description,
-                  ws.required_checklist_json AS requiredChecklistJson
+                  ws.required_checklist_json AS requiredChecklistJson,
+                  ws.allowed_next_stage_keys_json AS allowedNextStageKeysJson
            FROM matter_workflows mw
            JOIN workflow_stages ws
              ON ws.workflow_version_id = mw.workflow_version_id
@@ -983,6 +985,9 @@ export class WorkflowStore {
       description: String(stage.description),
       requiredChecklistKeys: JSON.parse(
         String(stage.requiredChecklistJson),
+      ) as string[],
+      allowedNextStageKeys: JSON.parse(
+        String(stage.allowedNextStageKeysJson),
       ) as string[],
     }));
   }

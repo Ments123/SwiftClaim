@@ -28,6 +28,7 @@ import {
   type CommunicationWorkspace,
   type EvidenceWorkspace,
   type MatterIntakeProfile,
+  type NegotiationWorkspace,
   type MatterSection,
   type ProtectedOffer,
   type ProtocolWorkspace,
@@ -40,6 +41,7 @@ import { CommunicationsPanel } from '../components/matter/CommunicationsPanel.js
 import { DefectsRepairsPanel } from '../components/matter/DefectsRepairsPanel.js';
 import { EvidenceInvestigationPanel } from '../components/matter/EvidenceInvestigationPanel.js';
 import { MatterHeader } from '../components/matter/MatterHeader.js';
+import { NegotiationSettlementPanel } from '../components/matter/NegotiationSettlementPanel.js';
 import { MatterSectionRail } from '../components/matter/MatterSectionRail.js';
 import { OperationalOverview } from '../components/matter/OperationalOverview.js';
 import { PropertyTenancyPanel } from '../components/matter/PropertyTenancyPanel.js';
@@ -87,6 +89,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [communicationsWorkspace, setCommunicationsWorkspace] = useState<CommunicationWorkspace>();
   const [communicationsLoading, setCommunicationsLoading] = useState(false);
   const [communicationsError, setCommunicationsError] = useState('');
+  const [negotiationWorkspace, setNegotiationWorkspace] = useState<NegotiationWorkspace>();
+  const [negotiationLoading, setNegotiationLoading] = useState(false);
+  const [negotiationError, setNegotiationError] = useState('');
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
@@ -152,6 +157,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setCommunicationsWorkspace(undefined);
     setCommunicationsLoading(false);
     setCommunicationsError('');
+    setNegotiationWorkspace(undefined);
+    setNegotiationLoading(false);
+    setNegotiationError('');
     setMutationError('');
     setSection('overview');
     void loadAll(controller.signal);
@@ -289,6 +297,32 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     return () => controller.abort();
   }, [communicationsError, communicationsWorkspace, loadCommunicationsWorkspace, section]);
 
+  const loadNegotiationWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setNegotiationLoading(true);
+    setNegotiationError('');
+    try {
+      setNegotiationWorkspace(await request<NegotiationWorkspace>(
+        `/api/matters/${matterId}/negotiation-settlement`, { signal },
+      ));
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setNegotiationError(reason instanceof Error ? reason.message : 'The negotiation workspace is unavailable.');
+    } finally {
+      if (!signal?.aborted) setNegotiationLoading(false);
+    }
+  }, [matterId]);
+
+  useEffect(() => {
+    if (section !== 'negotiation_settlement' || negotiationWorkspace || negotiationError) return;
+    const controller = new AbortController();
+    void loadNegotiationWorkspace(controller.signal);
+    return () => controller.abort();
+  }, [loadNegotiationWorkspace, negotiationError, negotiationWorkspace, section]);
+
+  const loadProtectedNegotiation = useCallback(() => request<NegotiationWorkspace>(
+    `/api/matters/${matterId}/negotiation-settlement/protected`,
+  ), [matterId]);
+
   const loadProtectedOffers = useCallback(async () => {
     const response = await request<{ offers: ProtectedOffer[] }>(
       `/api/matters/${matterId}/offers/protected`,
@@ -354,6 +388,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
           (quantumWorkspace?.workSchedules[0]?.items.length ?? 0) +
           (quantumWorkspace?.lossSchedules[0]?.items.length ?? 0),
         communications: communicationsWorkspace?.counts.total,
+        negotiation_settlement:
+          (negotiationWorkspace?.actions.length ?? 0) +
+          (negotiationWorkspace?.settlements.length ?? 0),
       }
     : { tasks_calendar: summary.nextActions.length };
 
@@ -483,6 +520,18 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
 
       {section === 'communications' && communicationsWorkspace ? (
         <CommunicationsPanel matterId={matterId} workspace={communicationsWorkspace} documents={aggregate?.documents ?? []} onRefresh={() => loadCommunicationsWorkspace()} />
+      ) : null}
+
+      {section === 'negotiation_settlement' && negotiationLoading && !negotiationWorkspace ? (
+        <section className="surface tab-surface" aria-busy="true"><div className="skeleton skeleton--heading" /><div className="skeleton skeleton--matter" /></section>
+      ) : null}
+
+      {section === 'negotiation_settlement' && negotiationError && !negotiationWorkspace ? (
+        <section className="surface tab-surface page-state"><Scale size={30} /><h2>Negotiation workspace unavailable</h2><p>{negotiationError}</p><button className="button button--secondary" type="button" onClick={() => void loadNegotiationWorkspace()}><RefreshCw size={15} /> Retry</button></section>
+      ) : null}
+
+      {section === 'negotiation_settlement' && negotiationWorkspace ? (
+        <NegotiationSettlementPanel matterId={matterId} workspace={negotiationWorkspace} onRefresh={() => loadNegotiationWorkspace()} loadProtected={loadProtectedNegotiation} />
       ) : null}
 
       {aggregate && section === 'documents' ? (

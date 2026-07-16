@@ -27,6 +27,7 @@ This repository contains a real full-stack application, not a static prototype. 
 - physically segregated open and protected offers with controlled Part 36 date projections;
 - one governed email, WhatsApp, letter, telephone and internal communication ledger with exact document-version attachments;
 - versioned drafts, approval gates, explicit dispatch confirmation, provider-event projection, call identity/recording provenance and reviewable service assertions;
+- human-authored negotiation reviews, immutable client instructions, versioned authority, exact-term approval gates, settlement terms and evidence-backed obligations;
 - append-only audit records protected by database triggers;
 - ordered, transactional database migrations;
 - responsive desktop, tablet, and mobile interface;
@@ -136,6 +137,22 @@ SwiftClaim does not value general damages, decide whether work is legally comple
 
 The evaluation adapter performs no external network call. Live provider credentials and client material must not be used with this build. WhatsApp calling is deliberately disabled until an approved provider, consent/notice flow and operational controls are implemented.
 
+### Negotiation and settlement
+
+- active **Negotiation & settlement** Matter 360 workspace with Position, Advice & instructions, Authority, and Settlement & compliance views;
+- ordinary records and protected/privileged records assembled through separate endpoints, with no protected counts or narratives in ordinary responses;
+- human-authored advice linked to a canonical SHA-256 source manifest rather than autonomous recommendations;
+- immutable client instructions recording the exact action or settlement-terms version, identity/authority basis, understanding, accessibility measures and retained source;
+- append-only settlement-authority versions defining covered action types, amount ranges, constraints, review dates and separate-approval requirements;
+- immutable negotiation-action versions whose prior instruction and approval are invalidated by any material terms change;
+- separate submission, partner approval and external-act records—preparation or provider acceptance never becomes communication, delivery, service or legal effect;
+- settlement conclusion requiring exact current terms, exact client instruction, reviewed court-approval position, retained instrument/source and human confirmation;
+- post-settlement payment, costs, repair, access, inspection, document and filing obligations;
+- `performance_asserted` remains distinct from evidence-backed `satisfied`; waiver is partner/admin-only and requires retained authority;
+- explicit Negotiation → Proceedings and Negotiation → Settlement workflow paths, with arbitrary stage jumps rejected and Closure blocked by unresolved settlement controls.
+
+SwiftClaim records source facts, calculations and human decisions. It does not autonomously decide whether to make, accept, reject or withdraw an offer; determine Part 36 validity or effect; conclude that terms are binding or enforceable; decide whether court approval is required; or waive an obligation. The controls are informed by the current [SRA Code of Conduct](https://www.sra.org.uk/solicitors/standards-regulations/code-conduct-solicitors/), [CPR Part 36](https://www.justice.gov.uk/courts/procedure-rules/civil/rules/part36) and [CPR Part 40](https://www.justice.gov.uk/courts/procedure-rules/civil/rules/part40), but a human solicitor remains responsible for applying the law to the matter.
+
 ## Quick start
 
 Requirements: Node.js 24 or newer and npm 11 or newer.
@@ -171,7 +188,9 @@ Use Ava for both supported evaluation journeys:
 6. Choose **Repairs & quantum**. The seeded position includes a contractor completion assertion disputed by Maya, a separately expert-verified bathroom repair, an approved £143.13 special-damages schedule with one acknowledged evidence gap, and a human-entered £2,000–£3,500 general-damages range.
 7. Open **Offers** to see the ordinary protocol proposal. The protected Part 36 record is not included in that response: select the explicit protected-offer action to load it through the separately authorised endpoint and inspect the human-reviewed relevant-period projection.
 8. Choose **Communications** to inspect Maya's synthetic landlord email, provider-accepted WhatsApp message, identity-confirmed unrecorded call, privileged internal note, outbound letter with an unreviewed service assertion, and protected draft awaiting approval.
-9. The longer-running Maya matter is at Repairs and quantum; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
+9. Choose **Negotiation & settlement**, then use the explicit protected-view action. Review the human advice, £3,000–£3,500 authority, exact £3,250 counteroffer instruction and separate partner approval. The counteroffer is authorised but has no external act, so SwiftClaim does not label it sent.
+10. Open **Settlement & compliance** to inspect the separately concluded synthetic settlement. Its payment obligation is only `performance asserted`, not satisfied, because client receipt evidence has not been retained.
+11. The longer-running Maya matter is at Repairs and quantum; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
 
 Use Marcus to test partner-only workflow overrides. Use Lewis to see Southbank's separate Amara Jones enquiry and verify that Northstar enquiry and matter UUIDs remain invisible across firms. All names, addresses, organisations and claim details in the seed are synthetic and evaluation-only.
 
@@ -209,6 +228,7 @@ flowchart TD
   Policy --> Protocol["Protocol and expert service"]
   Policy --> Quantum["Repairs and quantum service"]
   Policy --> Communications["Communications service"]
+  Policy --> Negotiation["Negotiation and settlement service"]
   Intake --> DB[(SQLite adapter)]
   Matter --> DB[(SQLite adapter)]
   Workflow --> DB
@@ -216,6 +236,7 @@ flowchart TD
   Protocol --> DB
   Quantum --> DB
   Communications --> DB
+  Negotiation --> DB
   Communications --> Provider["Evaluation provider boundary"]
   Protocol --> Files
   Matter --> Files[Private file storage]
@@ -232,6 +253,7 @@ The boundaries are deliberately portable:
 - `src/server/protocol/` owns source assembly, deterministic DOCX rendering, protocol and expert persistence, readiness and its HTTP boundary;
 - `src/server/quantum/` owns exact money calculations, repair projections, schedules, valuations, offer segregation, readiness and its HTTP boundary;
 - `src/server/communications/` owns the communication ledger, drafts, approvals, dispatch projection, calls, service assertions and provider boundary;
+- `src/server/negotiation/` owns human advice, client instructions, exact action authority, settlement terms, obligations and readiness;
 - `src/server/storage.ts` owns immutable bytes and hashes;
 - `src/server/migrations/` owns ordered schema evolution;
 - `src/server/app.ts` maps HTTP requests to those boundaries;
@@ -239,7 +261,7 @@ The boundaries are deliberately portable:
 
 SQLite and local storage are evaluation adapters. The same contracts can move to PostgreSQL and encrypted object storage without rewriting the browser application.
 
-Schema migration 6 adds the tenant-scoped repairs, work-event, loss, valuation, offer, Part 36 and command-receipt records. Migration 7 adds governed conversations, immutable entries and attachments, draft versions and approvals, dispatch/provider events, call sessions and service assertions with tenant constraints, immutability guards and indexes.
+Schema migration 6 adds the tenant-scoped repairs, work-event, loss, valuation, offer, Part 36 and command-receipt records. Migration 7 adds governed conversations, immutable entries and attachments, draft versions and approvals, dispatch/provider events, call sessions and service assertions. Migration 8 adds negotiation reviews, instructions, authority and action versions, append-only approvals and external acts, settlement terms and obligations, explicit workflow branches, tenant constraints, immutability guards and indexes.
 
 ## Security model
 
@@ -334,6 +356,19 @@ The approved Step 1 design and implementation plan are in `docs/superpowers/`.
 | `POST` | `/api/matters/:matterId/communication-drafts/:draftId/decisions` | Record an authorised approval decision |
 | `POST` | `/api/matters/:matterId/communication-drafts/:draftId/dispatch` | Explicitly dispatch through the configured provider boundary |
 | `POST` | `/api/matters/:matterId/communication-calls` | Record a call note and consent/identity provenance |
+| `GET` | `/api/matters/:matterId/negotiation-settlement` | Ordinary negotiation and settlement workspace |
+| `GET` | `/api/matters/:matterId/negotiation-settlement/protected` | Separately authorise and load privileged/protected records |
+| `POST` | `/api/matters/:matterId/negotiation-reviews` | Record human-authored source-manifested advice |
+| `POST` | `/api/matters/:matterId/client-instructions` | Record an immutable exact-version client instruction |
+| `POST` | `/api/matters/:matterId/settlement-authority-versions` | Append a reviewed authority version |
+| `POST` | `/api/matters/:matterId/negotiation-actions` | Prepare an exact negotiation-action version without communicating it |
+| `POST` | `/api/matters/:matterId/negotiation-actions/:actionId/decisions` | Decide the exact submitted action version |
+| `POST` | `/api/matters/:matterId/negotiation-actions/:actionId/external-acts` | Record a retained-evidence external fact after all gates |
+| `POST` | `/api/matters/:matterId/settlements` | Create a governed settlement record |
+| `POST` | `/api/matters/:matterId/settlements/:settlementId/terms` | Append immutable exact settlement terms |
+| `POST` | `/api/matters/:matterId/settlements/:settlementId/conclude` | Human-confirm exact terms, source and court-approval review |
+| `POST` | `/api/matters/:matterId/settlements/:settlementId/obligations` | Create a structured post-settlement obligation |
+| `POST` | `/api/matters/:matterId/settlement-obligations/:obligationId/events` | Append assertion, evidence, dispute, correction or waiver facts |
 | `POST` | `/api/matters/:id/workflow/transitions` | Progress a workflow with readiness and version controls |
 | `POST` | `/api/matters/:id/workflow/triggers` | Confirm a legal event and calculate its governed deadline |
 | `POST` | `/api/matters/:id/parties` | Add a matter party |

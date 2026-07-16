@@ -57,6 +57,21 @@ export interface QuantumReadinessProvider {
   };
 }
 
+export interface NegotiationReadinessProvider {
+  getNegotiationReadiness(
+    firmId: string,
+    matterId: string,
+    stageKey: 'negotiation' | 'settlement',
+  ): {
+    controls: Array<{
+      key: 'settlement_authority_recorded' | 'settlement_terms_recorded';
+      eligible: boolean;
+      explanation: string;
+    }>;
+    progressionBlockers: WorkflowBlocker[];
+  };
+}
+
 function checklistLabel(key: string): string {
   const sentence = key.replaceAll('_', ' ');
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
@@ -82,6 +97,7 @@ export class WorkflowService {
     private readonly evidenceReadiness?: EvidenceReadinessProvider,
     private readonly protocolReadiness?: ProtocolReadinessProvider,
     private readonly quantumReadiness?: QuantumReadinessProvider,
+    private readonly negotiationReadiness?: NegotiationReadinessProvider,
   ) {}
 
   getMatter360(user: SessionUser, matterId: string) {
@@ -155,6 +171,27 @@ export class WorkflowService {
           [...blockers, ...objective].map((blocker) => [blocker.key, blocker]),
         ).values(),
       ];
+    }
+    if (
+      this.negotiationReadiness &&
+      (currentStage.key === 'negotiation' || currentStage.key === 'settlement')
+    ) {
+      const readiness = this.negotiationReadiness.getNegotiationReadiness(
+        user.firmId,
+        matterId,
+        currentStage.key,
+      );
+      const objective = readiness.controls
+        .filter(({ eligible }) => !eligible)
+        .map((control): WorkflowBlocker => ({
+          key: control.key,
+          label: control.explanation,
+          severity: 'critical',
+        }));
+      blockers = [...new Map(
+        [...blockers, ...objective, ...readiness.progressionBlockers]
+          .map((blocker) => [blocker.key, blocker]),
+      ).values()];
     }
     const deadlines = this.workflowStore.listMatterDeadlines(
       user.firmId,
@@ -315,6 +352,13 @@ export class WorkflowService {
         'The current workflow stage is not configured.',
       );
     }
+    if (!currentStage.allowedNextStageKeys.includes(targetStage.key)) {
+      throw new WorkflowError(
+        'READINESS_BLOCKED',
+        'The requested stage is not an allowed next stage for this workflow.',
+        { currentStageKey: currentStage.key, toStageKey: targetStage.key },
+      );
+    }
     const allowedChecklistKeys = new Set(
       stages.flatMap((stage) => stage.requiredChecklistKeys),
     );
@@ -409,6 +453,33 @@ export class WorkflowService {
           });
         }
       }
+    }
+    if (
+      this.negotiationReadiness &&
+      (currentStage.key === 'negotiation' || currentStage.key === 'settlement')
+    ) {
+      const readiness = this.negotiationReadiness.getNegotiationReadiness(
+        user.firmId,
+        matterId,
+        currentStage.key,
+      );
+      const controls = new Map(readiness.controls.map((control) => [control.key, control]));
+      for (const key of suppliedChecklistKeys.filter((candidate) =>
+        currentStage.requiredChecklistKeys.includes(candidate),
+      )) {
+        const control = controls.get(
+          key as 'settlement_authority_recorded' | 'settlement_terms_recorded',
+        );
+        if (!control?.eligible) {
+          supportedSuppliedChecklistKeys.delete(key);
+          objectiveBlockers.push({
+            key,
+            label: control?.explanation ?? `${checklistLabel(key)} is not supported.`,
+            severity: 'critical',
+          });
+        }
+      }
+      objectiveBlockers.push(...readiness.progressionBlockers);
     }
     const completed = new Set([
       ...this.workflowStore.listCompletedChecklistKeys(user.firmId, matterId),

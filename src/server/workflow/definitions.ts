@@ -78,6 +78,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
         'initial_contact_recorded',
         'conflict_check_completed',
       ],
+      allowedNextStageKeys: ['assessment'],
     },
     {
       key: 'assessment',
@@ -90,6 +91,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
         'limitation_reviewed',
         'merits_decision_recorded',
       ],
+      allowedNextStageKeys: ['onboarding'],
     },
     {
       key: 'onboarding',
@@ -102,6 +104,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
         'id_checks_completed',
         'funding_recorded',
       ],
+      allowedNextStageKeys: ['evidence'],
     },
     {
       key: 'evidence',
@@ -113,6 +116,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
         'notice_evidence_recorded',
         'photographs_recorded',
       ],
+      allowedNextStageKeys: ['protocol'],
     },
     {
       key: 'protocol',
@@ -120,6 +124,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
       position: 4,
       description: 'Prepare, send and monitor the Housing Conditions Letter of Claim.',
       requiredChecklistKeys: ['letter_of_claim_sent'],
+      allowedNextStageKeys: ['expert'],
     },
     {
       key: 'expert',
@@ -127,6 +132,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
       position: 5,
       description: 'Instruct the expert and control inspection and report milestones.',
       requiredChecklistKeys: ['expert_instruction_confirmed'],
+      allowedNextStageKeys: ['repairs_quantum'],
     },
     {
       key: 'repairs_quantum',
@@ -137,6 +143,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
         'works_status_reviewed',
         'damages_schedule_reviewed',
       ],
+      allowedNextStageKeys: ['negotiation'],
     },
     {
       key: 'negotiation',
@@ -144,6 +151,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
       position: 7,
       description: 'Control offers, advice and current settlement authority.',
       requiredChecklistKeys: ['settlement_authority_recorded'],
+      allowedNextStageKeys: ['proceedings', 'settlement'],
     },
     {
       key: 'proceedings',
@@ -151,6 +159,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
       position: 8,
       description: 'Issue and manage court proceedings, directions and hearings.',
       requiredChecklistKeys: ['court_authority_recorded'],
+      allowedNextStageKeys: ['settlement'],
     },
     {
       key: 'settlement',
@@ -158,6 +167,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
       position: 9,
       description: 'Record agreed terms, works, damages, costs and payment dates.',
       requiredChecklistKeys: ['settlement_terms_recorded'],
+      allowedNextStageKeys: ['closure'],
     },
     {
       key: 'closure',
@@ -168,6 +178,7 @@ export const HOUSING_DISREPAIR_WORKFLOW: WorkflowDefinition = {
         'final_outcome_recorded',
         'closure_review_completed',
       ],
+      allowedNextStageKeys: [],
     },
   ],
   deadlineRules: [
@@ -318,8 +329,8 @@ export function seedWorkflowDefinitions(
     const insertStage = database.prepare(
       `INSERT OR IGNORE INTO workflow_stages (
         id, workflow_version_id, key, name, position, description,
-        required_checklist_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        required_checklist_json, allowed_next_stage_keys_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     HOUSING_DISREPAIR_WORKFLOW.stages.forEach((stage, index) => {
       insertStage.run(
@@ -330,6 +341,7 @@ export function seedWorkflowDefinitions(
         stage.position,
         stage.description,
         JSON.stringify(stage.requiredChecklistKeys),
+        JSON.stringify(stage.allowedNextStageKeys),
       );
     });
 

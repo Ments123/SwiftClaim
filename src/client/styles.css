@@ -4251,6 +4251,42 @@ a {
   .protocol-defect-fields > div { grid-template-columns: 1fr; }
 }
 
+/* Negotiation, authority and settlement */
+.negotiation-workspace { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: var(--shadow-sm); }
+.negotiation-header { padding: 20px 22px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.negotiation-header h2 { margin: 3px 0 4px; font-size: 1.4rem; }
+.negotiation-header p { max-width: 690px; margin: 0; color: var(--muted); font-size: .71rem; line-height: 1.55; }
+.protected-access-badge { padding: 7px 9px; border: 1px solid #cdb8de; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; color: #62437f; background: #fbf7ff; font-size: .61rem; font-weight: 800; }
+.negotiation-control-note { margin: 0 22px 13px; padding: 9px 11px; border: 1px solid #efd49e; border-radius: 9px; display: flex; align-items: flex-start; gap: 8px; color: #77521a; background: #fff9ec; font-size: .62rem; line-height: 1.5; }
+.negotiation-metrics { padding: 0 22px 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.negotiation-metrics > div { padding: 10px; border: 1px solid var(--line); border-radius: 9px; display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 5px; color: var(--blue-700); background: #f8fafc; }
+.negotiation-metrics span { color: var(--muted); font-size: .59rem; font-weight: 750; }.negotiation-metrics strong { color: var(--ink); font-size: .85rem; }
+.negotiation-content { padding: 20px; border-top: 1px solid var(--line); }
+.negotiation-view > header { margin-bottom: 13px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }.negotiation-view h3 { margin: 3px 0; font-size: 1rem; }
+.negotiation-card-list { display: grid; gap: 9px; }
+.negotiation-card { padding: 13px; border: 1px solid var(--line); border-left: 4px solid #7e96b7; border-radius: 10px; display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 10px; }
+.negotiation-card h4, .settlement-card h4, .advice-record h4 { margin: 3px 0; font-size: .77rem; }.negotiation-card p { margin: 2px 0; font-size: .72rem; font-weight: 750; }.negotiation-card > div > span, .settlement-card header span:first-child, .advice-record header span { color: var(--muted); font-size: .55rem; font-weight: 800; text-transform: uppercase; }
+.negotiation-card dl, .authority-card dl, .settlement-card dl { grid-column: 1 / -1; margin: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }.negotiation-card dl div, .authority-card dl div, .settlement-card dl div { padding: 7px 8px; border-radius: 7px; background: #f4f6f9; }.negotiation-card dt, .authority-card dt, .settlement-card dt { color: var(--muted); font-size: .53rem; }.negotiation-card dd, .authority-card dd, .settlement-card dd { margin: 2px 0 0; font-size: .62rem; font-weight: 760; text-transform: capitalize; }
+.governance-state { height: max-content; padding: 5px 7px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; color: #925c0a; background: #fff3d9; font-size: .56rem; font-weight: 800; text-transform: capitalize; }.governance-state--authorised, .governance-state--externally_recorded, .governance-state--concluded { color: #237144; background: #eaf7ef; }
+.advice-record, .instruction-record, .authority-card, .settlement-card { padding: 13px; border: 1px solid var(--line); border-radius: 10px; }.advice-record + .advice-record, .instruction-record + .instruction-record { margin-top: 8px; }.advice-record header, .authority-card header, .settlement-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }.advice-record p, .authority-card p { color: var(--muted); font-size: .64rem; line-height: 1.55; }.advice-record small, .authority-card > small { color: var(--muted); font-size: .55rem; }.advice-record code { color: var(--muted); font-size: .56rem; }
+.instruction-record { margin-top: 8px; display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; color: var(--blue-700); }.instruction-record span, .instruction-record time { color: var(--muted); font-size: .55rem; }.instruction-record strong { display: block; margin-top: 2px; color: var(--ink); font-size: .67rem; }.instruction-record p { margin: 4px 0 0; color: var(--muted); font-size: .61rem; }
+.authority-card { border-color: #cdb8de; background: #fcf9ff; }.authority-card header { color: #62437f; }.authority-card h3 { margin: 3px 0; }.authority-card dl { grid-template-columns: repeat(3, 1fr); }
+.settlement-card + .settlement-card { margin-top: 8px; }.settlement-card dl { margin-top: 11px; grid-template-columns: repeat(3, 1fr); }
+.negotiation-empty { min-height: 160px; display: grid; place-items: center; align-content: center; gap: 5px; color: var(--muted); text-align: center; }.negotiation-empty h4 { margin: 0; color: var(--ink); font-size: .79rem; }.negotiation-empty p { max-width: 430px; margin: 0; font-size: .63rem; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .negotiation-header, .negotiation-view > header { flex-direction: column; }
+  .negotiation-metrics { grid-template-columns: repeat(2, 1fr); }
+  .authority-card dl, .settlement-card dl { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 460px) {
+  .negotiation-header, .negotiation-content { padding: 14px; }
+  .negotiation-control-note { margin: 0 14px 12px; }
+  .negotiation-metrics { padding: 0 14px 14px; grid-template-columns: 1fr; }
+  .negotiation-card { grid-template-columns: 1fr; }.negotiation-card dl { grid-template-columns: 1fr; }
+}
+
 /* Governed communications */
 .communications-workspace {
   overflow: hidden;
