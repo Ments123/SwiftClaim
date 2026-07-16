@@ -1,5 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 
+import { EvaluationCommunicationProvider } from './communications/evaluation-provider.js';
+import { CommunicationProviderRegistry } from './communications/provider.js';
+import { CommunicationService } from './communications/service.js';
+import { CommunicationStore } from './communications/store.js';
 import { migrations, runMigrations } from './migrations/index.js';
 import { IntakeConflictService } from './intake/conflicts.js';
 import { IntakeService } from './intake/service.js';
@@ -1698,6 +1702,218 @@ export async function seedProtocolExpertsEvaluation(
       correctionReason: '',
     }, audit);
     expert = service.getWorkspace(user, SEED_IDS.northstarMatter)!.experts[0]!;
+  }
+}
+
+export async function seedCommunicationsEvaluation(
+  database: DatabaseSync,
+): Promise<void> {
+  const now = () => new Date('2026-08-20T09:00:00.000Z');
+  const user: SessionUser = {
+    id: SEED_IDS.ava,
+    firmId: SEED_IDS.northstarFirm,
+    firmName: 'Northstar Legal',
+    email: 'ava@northstar.test',
+    name: 'Ava Morgan',
+    role: 'solicitor',
+  };
+  const audit = {
+    requestId: 'seed-communications-evaluation',
+    ipAddress: '127.0.0.1',
+  };
+  const store = new CommunicationStore(database, now);
+  const service = new CommunicationService(
+    store,
+    new CommunicationProviderRegistry([
+      new EvaluationCommunicationProvider(now, 'swiftclaim-evaluation-only'),
+    ]),
+  );
+
+  let workspace = await service.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (!workspace.entries.some(({ subject }) => subject === 'Landlord repair appointment proposal')) {
+    service.recordEntry(user, SEED_IDS.northstarMatter, {
+      idempotencyKey: 'seed-communication-inbound-email',
+      channel: 'email',
+      direction: 'inbound',
+      confidentiality: 'ordinary',
+      participants: [{
+        role: 'from',
+        displayName: 'Meridian Housing Legal Team',
+        endpointType: 'email',
+        endpoint: 'fictional-legal@example.test',
+        partyId: null,
+        userId: null,
+      }],
+      subject: 'Landlord repair appointment proposal',
+      body: 'The fictional landlord proposes a contractor appointment on 22 August 2026 between 09:00 and 12:00.',
+      bodyFormat: 'plain',
+      occurredAt: '2026-08-19T14:15:00.000Z',
+      attachmentVersionIds: [SEED_IDS.complaintVersion],
+      source: 'manual',
+      providerKey: null,
+      externalMessageId: null,
+      externalThreadId: null,
+      conversationId: null,
+      supersedesEntryId: null,
+      correctionReason: '',
+    }, audit);
+  }
+
+  workspace = await service.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (!workspace.drafts.some(({ currentVersion }) => currentVersion.subject === 'Repair appointment reminder')) {
+    const draft = service.createDraft(user, SEED_IDS.northstarMatter, {
+      channel: 'whatsapp',
+      confidentiality: 'ordinary',
+      participants: [{
+        role: 'to',
+        displayName: 'Maya Clarke',
+        endpointType: 'whatsapp',
+        endpoint: '+447700900123',
+        partyId: null,
+        userId: null,
+      }],
+      subject: 'Repair appointment reminder',
+      body: 'Synthetic reminder: the contractor appointment is proposed for 22 August from 09:00 to 12:00.',
+      bodyFormat: 'plain',
+      attachmentVersionIds: [],
+      conversationId: null,
+    }, audit);
+    await service.dispatch(user, SEED_IDS.northstarMatter, draft.id, {
+      expectedVersion: draft.recordVersion,
+      idempotencyKey: 'seed-communication-whatsapp-dispatch',
+      providerKey: 'evaluation',
+      confirmed: true,
+    }, audit);
+  }
+
+  workspace = await service.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (!workspace.entries.some(({ subject }) => subject === 'Client repair access call')) {
+    service.recordCall(user, SEED_IDS.northstarMatter, {
+      idempotencyKey: 'seed-communication-client-call',
+      channel: 'telephone',
+      confidentiality: 'ordinary',
+      direction: 'outbound',
+      participants: [{
+        role: 'callee',
+        displayName: 'Maya Clarke',
+        endpointType: 'phone',
+        endpoint: '+447700900123',
+        partyId: null,
+        userId: null,
+      }],
+      occurredAt: '2026-08-20T08:30:00.000Z',
+      subject: 'Client repair access call',
+      body: 'Maya confirmed her identity and availability for the proposed access window.',
+      startedAt: '2026-08-20T08:30:00.000Z',
+      endedAt: '2026-08-20T08:36:00.000Z',
+      purpose: 'Confirm identity, instructions and repair access availability.',
+      outcome: 'Identity confirmed and access availability recorded for the proposed appointment.',
+      identityCheckStatus: 'confirmed',
+      identityCheckNote: 'Full name, property address and matter context confirmed.',
+      recordingStatus: 'not_recorded',
+      noticeConsentBasis: '',
+      attachmentVersionIds: [],
+      recordingVersionIds: [],
+      transcriptVersionIds: [],
+      callNoteVersionIds: [],
+      providerKey: null,
+      externalCallId: null,
+    }, audit);
+  }
+
+  workspace = await service.getWorkspace(user, SEED_IDS.northstarMatter);
+  let letter = workspace.entries.find(({ subject }) => subject === 'Schedule of works covering letter');
+  if (!letter) {
+    letter = service.recordEntry(user, SEED_IDS.northstarMatter, {
+      idempotencyKey: 'seed-communication-outbound-letter',
+      channel: 'letter',
+      direction: 'outbound',
+      confidentiality: 'ordinary',
+      participants: [{
+        role: 'to',
+        displayName: 'Meridian Housing Association',
+        endpointType: 'postal_address',
+        endpoint: '1 Meridian Square, Manchester, M1 1AA',
+        partyId: null,
+        userId: null,
+      }],
+      subject: 'Schedule of works covering letter',
+      body: 'Synthetic covering letter enclosing the reviewed schedule of works.',
+      bodyFormat: 'plain',
+      occurredAt: '2026-08-20T08:45:00.000Z',
+      attachmentVersionIds: [SEED_IDS.repairVersion],
+      source: 'manual',
+      providerKey: null,
+      externalMessageId: null,
+      externalThreadId: null,
+      conversationId: null,
+      supersedesEntryId: null,
+      correctionReason: '',
+    }, audit);
+  }
+  store.recordServiceAssertion(user, SEED_IDS.northstarMatter, letter.id, {
+    assertedMethod: 'first_class_post',
+    serviceAt: '2026-08-20T08:45:00.000Z',
+    recipient: 'Meridian Housing Association',
+    endpoint: '1 Meridian Square, Manchester, M1 1AA',
+    sourceDocumentVersionId: SEED_IDS.repairVersion,
+    factualNote: 'Synthetic evaluation assertion only; service and legal effect remain unreviewed.',
+  }, audit);
+
+  workspace = await service.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (!workspace.entries.some(({ subject }) => subject === 'Privileged internal case strategy')) {
+    service.recordEntry(user, SEED_IDS.northstarMatter, {
+      idempotencyKey: 'seed-communication-privileged-note',
+      channel: 'internal',
+      direction: 'internal',
+      confidentiality: 'privileged',
+      participants: [{
+        role: 'author',
+        displayName: 'Ava Morgan',
+        endpointType: 'user',
+        endpoint: user.email,
+        partyId: null,
+        userId: user.id,
+      }],
+      subject: 'Privileged internal case strategy',
+      body: 'Synthetic privileged note retained for access-control evaluation only.',
+      bodyFormat: 'structured_note',
+      occurredAt: '2026-08-20T08:50:00.000Z',
+      attachmentVersionIds: [],
+      source: 'manual',
+      providerKey: null,
+      externalMessageId: null,
+      externalThreadId: null,
+      conversationId: null,
+      supersedesEntryId: null,
+      correctionReason: '',
+    }, audit);
+  }
+
+  workspace = await service.getWorkspace(user, SEED_IDS.northstarMatter);
+  if (!workspace.drafts.some(({ currentVersion }) => currentVersion.subject === 'Protected settlement response')) {
+    const protectedDraft = service.createDraft(user, SEED_IDS.northstarMatter, {
+      channel: 'email',
+      confidentiality: 'protected_negotiation',
+      participants: [{
+        role: 'to',
+        displayName: 'Meridian Housing Legal Team',
+        endpointType: 'email',
+        endpoint: 'fictional-legal@example.test',
+        partyId: null,
+        userId: null,
+      }],
+      subject: 'Protected settlement response',
+      body: 'Synthetic protected response awaiting exact-version supervisor approval.',
+      bodyFormat: 'plain',
+      attachmentVersionIds: [],
+      conversationId: null,
+    }, audit);
+    service.submitDraft(user, SEED_IDS.northstarMatter, protectedDraft.id, {
+      expectedVersion: protectedDraft.recordVersion,
+      idempotencyKey: 'seed-protected-draft-submit',
+      note: 'Supervisor approval is required before any external dispatch.',
+    }, audit);
   }
 }
 

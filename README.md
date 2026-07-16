@@ -1,6 +1,6 @@
 # SwiftClaim Litigation
 
-SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine, governed claimant intake and onboarding, atomic matter opening, a structured Housing Conditions evidence investigation, operational Pre-Action Protocol and expert-evidence controls, governed repairs and quantum, the first controlled workflow, and Matter 360. It is not yet the complete case-management programme.
+SwiftClaim Litigation is the working foundation of a modern, AI-ready litigation operating system for claimant law firms. The current product combines a secure matter spine, governed claimant intake and onboarding, atomic matter opening, a structured Housing Conditions evidence investigation, operational Pre-Action Protocol and expert-evidence controls, governed repairs and quantum, governed communications, the first controlled workflow, and Matter 360. It is not yet the complete case-management programme.
 
 This repository contains a real full-stack application, not a static prototype. The React interface uses a Fastify API, a durable SQLite database, private file storage, secure sessions, firm and matter-level access rules, versioned workflows, explainable deadline calculations, and append-only evidential records.
 
@@ -25,6 +25,8 @@ This repository contains a real full-stack application, not a static prototype. 
 - versioned schedules of works, append-only repair events and evidence-backed completion verification;
 - server-calculated schedules of loss, human valuation provenance and approval gates for evidence gaps;
 - physically segregated open and protected offers with controlled Part 36 date projections;
+- one governed email, WhatsApp, letter, telephone and internal communication ledger with exact document-version attachments;
+- versioned drafts, approval gates, explicit dispatch confirmation, provider-event projection, call identity/recording provenance and reviewable service assertions;
 - append-only audit records protected by database triggers;
 - ordered, transactional database migrations;
 - responsive desktop, tablet, and mobile interface;
@@ -46,7 +48,7 @@ This repository contains a real full-stack application, not a static prototype. 
 - one idempotent, transactional conversion that either creates the complete matter and workflow or creates nothing;
 - converted Matter 360 panels for Client & Household and Property & Tenancy, with a legacy-matter fallback.
 
-AI drafting, document analysis, call transcription and WhatsApp calling are part of the wider product programme; they are not represented as completed capabilities in this build. Human legal decisions and controlled source facts remain authoritative.
+AI drafting, document analysis, call transcription and live WhatsApp calling are part of the wider product programme; they are not represented as completed capabilities in this build. Human legal decisions and controlled source facts remain authoritative.
 
 ### Housing Conditions workflow foundation
 
@@ -92,7 +94,7 @@ SwiftClaim records source facts and review controls. It does not determine liabi
 - independent permissions for preparation, approval, conflict override and report review;
 - dense responsive layout that keeps legal risks, the next legal date, authority and provenance visible.
 
-SwiftClaim does not decide liability, whether expert evidence is legally required, professional competence, report adequacy, causation, limitation or quantum. It does not independently verify a professional registration. Email, post, WhatsApp, telephony and AI providers are not connected in this slice; external acts must be recorded only after an authorised user verifies them.
+SwiftClaim does not decide liability, whether expert evidence is legally required, professional competence, report adequacy, causation, limitation or quantum. It does not independently verify a professional registration. Live email, post, WhatsApp, telephony and AI providers are not connected in this build; external acts must be recorded only after an authorised user verifies them.
 
 The initial deadline rules are grounded in the official [Pre-Action Protocol for Housing Conditions Claims (England)](https://www.justice.gov.uk/courts/procedure-rules/civil/protocol/prot_hou):
 
@@ -119,6 +121,20 @@ Working-day calculations exclude weekends and configured England and Wales bank 
 - workflow progression validates approved current works, acknowledged warnings, an approved non-empty loss schedule, acknowledged gaps and current human valuation provenance.
 
 SwiftClaim does not value general damages, decide whether work is legally complete, determine an offer's validity or communicate an offer externally. Those remain human legal decisions and verified external acts.
+
+### Communications
+
+- active **Communications** Matter 360 workspace with channel, direction, confidentiality and status filters;
+- immutable inbound, outbound and internal ledger entries with participants, provenance and exact attachment hashes;
+- versioned email and WhatsApp drafts whose prior approval is invalidated by any edit;
+- separate protected-negotiation and privileged read controls applied before results and counts are returned;
+- explicit external-dispatch confirmation and honest transport states: provider acceptance is never labelled sent, delivered, read or served;
+- a zero-network evaluation provider that accepts synthetic email and WhatsApp-message dispatches and exposes unsupported capabilities with reasons;
+- telephone call notes with duration, purpose, outcome, identity-check and recording/notice provenance;
+- factual service assertions displayed with their unreviewed, reviewed or disputed status;
+- immutable provider events, idempotent commands, append-only audit events and tenant-safe operational outbox records.
+
+The evaluation adapter performs no external network call. Live provider credentials and client material must not be used with this build. WhatsApp calling is deliberately disabled until an approved provider, consent/notice flow and operational controls are implemented.
 
 ## Quick start
 
@@ -154,7 +170,8 @@ Use Ava for both supported evaluation journeys:
 5. Choose **Protocol & experts** to review the approved source-linked Letter of Claim, exact private DOCX download, verified dispatch and receipt, partial by-defect landlord response, expert identity and terms, conflict decision, immutable instruction, completed inspection and reviewed report.
 6. Choose **Repairs & quantum**. The seeded position includes a contractor completion assertion disputed by Maya, a separately expert-verified bathroom repair, an approved £143.13 special-damages schedule with one acknowledged evidence gap, and a human-entered £2,000–£3,500 general-damages range.
 7. Open **Offers** to see the ordinary protocol proposal. The protected Part 36 record is not included in that response: select the explicit protected-offer action to load it through the separately authorised endpoint and inspect the human-reviewed relevant-period projection.
-8. The longer-running Maya matter is at Repairs and quantum; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
+8. Choose **Communications** to inspect Maya's synthetic landlord email, provider-accepted WhatsApp message, identity-confirmed unrecorded call, privileged internal note, outbound letter with an unreviewed service assertion, and protected draft awaiting approval.
+9. The longer-running Maya matter is at Repairs and quantum; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
 
 Use Marcus to test partner-only workflow overrides. Use Lewis to see Southbank's separate Amara Jones enquiry and verify that Northstar enquiry and matter UUIDs remain invisible across firms. All names, addresses, organisations and claim details in the seed are synthetic and evaluation-only.
 
@@ -191,12 +208,15 @@ flowchart TD
   Policy --> Evidence["Evidence investigation service"]
   Policy --> Protocol["Protocol and expert service"]
   Policy --> Quantum["Repairs and quantum service"]
+  Policy --> Communications["Communications service"]
   Intake --> DB[(SQLite adapter)]
   Matter --> DB[(SQLite adapter)]
   Workflow --> DB
   Evidence --> DB
   Protocol --> DB
   Quantum --> DB
+  Communications --> DB
+  Communications --> Provider["Evaluation provider boundary"]
   Protocol --> Files
   Matter --> Files[Private file storage]
 ```
@@ -211,6 +231,7 @@ The boundaries are deliberately portable:
 - `src/server/evidence/` owns structured defects, notice/access history, immutable evidence links, readiness, risks and its HTTP boundary;
 - `src/server/protocol/` owns source assembly, deterministic DOCX rendering, protocol and expert persistence, readiness and its HTTP boundary;
 - `src/server/quantum/` owns exact money calculations, repair projections, schedules, valuations, offer segregation, readiness and its HTTP boundary;
+- `src/server/communications/` owns the communication ledger, drafts, approvals, dispatch projection, calls, service assertions and provider boundary;
 - `src/server/storage.ts` owns immutable bytes and hashes;
 - `src/server/migrations/` owns ordered schema evolution;
 - `src/server/app.ts` maps HTTP requests to those boundaries;
@@ -218,7 +239,7 @@ The boundaries are deliberately portable:
 
 SQLite and local storage are evaluation adapters. The same contracts can move to PostgreSQL and encrypted object storage without rewriting the browser application.
 
-Schema migration 6 adds the tenant-scoped repairs, work-event, loss, valuation, offer, Part 36 and command-receipt records plus their immutability guards and indexes.
+Schema migration 6 adds the tenant-scoped repairs, work-event, loss, valuation, offer, Part 36 and command-receipt records. Migration 7 adds governed conversations, immutable entries and attachments, draft versions and approvals, dispatch/provider events, call sessions and service assertions with tenant constraints, immutability guards and indexes.
 
 ## Security model
 
@@ -305,6 +326,14 @@ The approved Step 1 design and implementation plan are in `docs/superpowers/`.
 | `GET` | `/api/matters/:matterId/offers/protected` | Separately authorise and load protected offer terms |
 | `POST` | `/api/matters/:matterId/offers/:offerId/events` | Append an offer status or explicit outcome event |
 | `POST` | `/api/matters/:matterId/offers/:offerId/part36-review` | Record confirmed service and a human-reviewed date projection |
+| `GET` | `/api/matters/:matterId/communications` | Authorised ledger, drafts, filtered counts and provider capabilities |
+| `POST` | `/api/matters/:matterId/communications/record` | Record an immutable inbound, outbound or internal communication |
+| `POST` | `/api/matters/:matterId/communication-drafts` | Create a versioned governed draft |
+| `POST` | `/api/matters/:matterId/communication-drafts/:draftId/versions` | Append a draft version and invalidate prior approval |
+| `POST` | `/api/matters/:matterId/communication-drafts/:draftId/submit` | Submit the exact current draft for approval |
+| `POST` | `/api/matters/:matterId/communication-drafts/:draftId/decisions` | Record an authorised approval decision |
+| `POST` | `/api/matters/:matterId/communication-drafts/:draftId/dispatch` | Explicitly dispatch through the configured provider boundary |
+| `POST` | `/api/matters/:matterId/communication-calls` | Record a call note and consent/identity provenance |
 | `POST` | `/api/matters/:id/workflow/transitions` | Progress a workflow with readiness and version controls |
 | `POST` | `/api/matters/:id/workflow/triggers` | Confirm a legal event and calculate its governed deadline |
 | `POST` | `/api/matters/:id/parties` | Add a matter party |
@@ -328,6 +357,7 @@ Copy `.env.example` values into your process environment. The application does n
 | `DATABASE_PATH` | `DATA_DIR/swiftclaim.sqlite` | SQLite database path |
 | `STORAGE_PATH` | `DATA_DIR/uploads` | Private immutable byte storage |
 | `SEED_DEMO_DATA` | true outside production | Add the two-firm evaluation dataset |
+| `COMMUNICATION_PROVIDER` | `evaluation` | Zero-network communications adapter; other values are rejected in this build |
 | `LOG_LEVEL` | `warn` development, `info` production | Structured server log level |
 
 ## Live-data boundary
@@ -338,6 +368,4 @@ Before a live pilot, replace the evaluation adapters with managed PostgreSQL and
 
 ## Next build
 
-The next case-management slice is **Correspondence and communication capture**, followed by negotiation and settlement authority, proceedings, costs and billing, closure, reporting, integrations, then supervised AI assistance across each governed source record. Calling and messaging integrations must preserve consent, identity, recording notices, retention, audit and human-review controls.
-
-SwiftBridge is deliberately deferred until the operational case-management model is sufficiently complete to receive Proclaim data without flattening or losing it. The current external identifiers, import-batch fields, file hashes, audit model, and integration outbox preserve the migration seam. When SwiftBridge begins, its first deliverable should be an anonymised discovery and dry-run import with source inventory, mappings, document manifest, reconciliation totals, and an exception queue before any live cutover.
+The next SwiftClaim case-management slice is **Negotiation and settlement authority**, followed by proceedings, costs and billing, closure, reporting, live integrations, then supervised AI assistance across each governed source record. Calling and messaging integrations must preserve consent, identity, recording notices, retention, audit and human-review controls.

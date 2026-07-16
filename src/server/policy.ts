@@ -32,6 +32,13 @@ export type Capability =
   | 'offers.read_protected'
   | 'offers.write'
   | 'offers.record_outcome'
+  | 'communications.read'
+  | 'communications.write'
+  | 'communications.approve'
+  | 'communications.send'
+  | 'communications.read_privileged'
+  | 'communications.read_protected'
+  | 'communications.manage_provider'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -58,6 +65,13 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'offers.read_protected',
     'offers.write',
     'offers.record_outcome',
+    'communications.read',
+    'communications.write',
+    'communications.approve',
+    'communications.send',
+    'communications.read_privileged',
+    'communications.read_protected',
+    'communications.manage_provider',
     'administration.view',
   ],
   partner: [
@@ -83,6 +97,13 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'offers.read_protected',
     'offers.write',
     'offers.record_outcome',
+    'communications.read',
+    'communications.write',
+    'communications.approve',
+    'communications.send',
+    'communications.read_privileged',
+    'communications.read_protected',
+    'communications.manage_provider',
     'administration.view',
   ],
   solicitor: [
@@ -103,6 +124,11 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'offers.read_protected',
     'offers.write',
     'offers.record_outcome',
+    'communications.read',
+    'communications.write',
+    'communications.send',
+    'communications.read_privileged',
+    'communications.read_protected',
   ],
   paralegal: [
     'matter.read',
@@ -116,9 +142,11 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'quantum.write',
     'offers.read_open',
     'offers.write',
+    'communications.read',
+    'communications.write',
   ],
   finance: ['matter.read'],
-  readonly: ['matter.read'],
+  readonly: ['matter.read', 'communications.read'],
 };
 
 export function hasCapability(

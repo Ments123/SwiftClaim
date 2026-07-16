@@ -7,6 +7,7 @@ import {
   FileCheck2,
   FileText,
   Fingerprint,
+  MessageSquareText,
   Paperclip,
   Plus,
   RefreshCw,
@@ -24,6 +25,7 @@ import {
   request,
   type Matter360Data,
   type MatterAggregate,
+  type CommunicationWorkspace,
   type EvidenceWorkspace,
   type MatterIntakeProfile,
   type MatterSection,
@@ -34,6 +36,7 @@ import {
 } from '../api.js';
 import { Dialog } from '../components/Dialog.js';
 import { ClientHouseholdPanel } from '../components/matter/ClientHouseholdPanel.js';
+import { CommunicationsPanel } from '../components/matter/CommunicationsPanel.js';
 import { DefectsRepairsPanel } from '../components/matter/DefectsRepairsPanel.js';
 import { EvidenceInvestigationPanel } from '../components/matter/EvidenceInvestigationPanel.js';
 import { MatterHeader } from '../components/matter/MatterHeader.js';
@@ -81,6 +84,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [quantumWorkspace, setQuantumWorkspace] = useState<RepairsQuantumWorkspace>();
   const [quantumLoading, setQuantumLoading] = useState(false);
   const [quantumError, setQuantumError] = useState('');
+  const [communicationsWorkspace, setCommunicationsWorkspace] = useState<CommunicationWorkspace>();
+  const [communicationsLoading, setCommunicationsLoading] = useState(false);
+  const [communicationsError, setCommunicationsError] = useState('');
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
@@ -143,6 +149,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setQuantumWorkspace(undefined);
     setQuantumLoading(false);
     setQuantumError('');
+    setCommunicationsWorkspace(undefined);
+    setCommunicationsLoading(false);
+    setCommunicationsError('');
     setMutationError('');
     setSection('overview');
     void loadAll(controller.signal);
@@ -258,6 +267,28 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     return () => controller.abort();
   }, [loadQuantumWorkspace, quantumError, quantumWorkspace, section]);
 
+  const loadCommunicationsWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setCommunicationsLoading(true);
+    setCommunicationsError('');
+    try {
+      setCommunicationsWorkspace(await request<CommunicationWorkspace>(
+        `/api/matters/${matterId}/communications`, { signal },
+      ));
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setCommunicationsError(reason instanceof Error ? reason.message : 'The communications workspace is unavailable.');
+    } finally {
+      if (!signal?.aborted) setCommunicationsLoading(false);
+    }
+  }, [matterId]);
+
+  useEffect(() => {
+    if (section !== 'communications' || communicationsWorkspace || communicationsError) return;
+    const controller = new AbortController();
+    void loadCommunicationsWorkspace(controller.signal);
+    return () => controller.abort();
+  }, [communicationsError, communicationsWorkspace, loadCommunicationsWorkspace, section]);
+
   const loadProtectedOffers = useCallback(async () => {
     const response = await request<{ offers: ProtectedOffer[] }>(
       `/api/matters/${matterId}/offers/protected`,
@@ -322,6 +353,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         damages_offers:
           (quantumWorkspace?.workSchedules[0]?.items.length ?? 0) +
           (quantumWorkspace?.lossSchedules[0]?.items.length ?? 0),
+        communications: communicationsWorkspace?.counts.total,
       }
     : { tasks_calendar: summary.nextActions.length };
 
@@ -439,6 +471,18 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
 
       {section === 'damages_offers' && quantumWorkspace ? (
         <RepairsQuantumPanel matterId={matterId} workspace={quantumWorkspace} onRefresh={() => loadQuantumWorkspace()} loadProtectedOffers={loadProtectedOffers} />
+      ) : null}
+
+      {section === 'communications' && communicationsLoading && !communicationsWorkspace ? (
+        <section className="surface tab-surface" aria-busy="true"><div className="skeleton skeleton--heading" /><div className="skeleton skeleton--matter" /></section>
+      ) : null}
+
+      {section === 'communications' && communicationsError && !communicationsWorkspace ? (
+        <section className="surface tab-surface page-state"><MessageSquareText size={30} /><h2>Communications unavailable</h2><p>{communicationsError}</p><button className="button button--secondary" type="button" onClick={() => void loadCommunicationsWorkspace()}><RefreshCw size={15} /> Retry</button></section>
+      ) : null}
+
+      {section === 'communications' && communicationsWorkspace ? (
+        <CommunicationsPanel matterId={matterId} workspace={communicationsWorkspace} documents={aggregate?.documents ?? []} onRefresh={() => loadCommunicationsWorkspace()} />
       ) : null}
 
       {aggregate && section === 'documents' ? (

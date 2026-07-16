@@ -23,6 +23,11 @@ import {
   type ApiErrorBody,
   type FirmRole,
 } from '../shared/contracts.js';
+import { EvaluationCommunicationProvider } from './communications/evaluation-provider.js';
+import { CommunicationProviderRegistry } from './communications/provider.js';
+import { communicationRoutes } from './communications/routes.js';
+import { CommunicationService } from './communications/service.js';
+import { CommunicationStore } from './communications/store.js';
 import { EvidenceService } from './evidence/service.js';
 import { evidenceRoutes } from './evidence/routes.js';
 import { EvidenceStore } from './evidence/store.js';
@@ -124,6 +129,12 @@ function publicUser(user: SessionUser) {
       canReadProtectedOffers: hasCapability(user, 'offers.read_protected'),
       canWriteOffers: hasCapability(user, 'offers.write'),
       canRecordOfferOutcome: hasCapability(user, 'offers.record_outcome'),
+      canReadCommunications: hasCapability(user, 'communications.read'),
+      canWriteCommunications: hasCapability(user, 'communications.write'),
+      canApproveCommunications: hasCapability(user, 'communications.approve'),
+      canSendCommunications: hasCapability(user, 'communications.send'),
+      canReadPrivilegedCommunications: hasCapability(user, 'communications.read_privileged'),
+      canReadProtectedCommunications: hasCapability(user, 'communications.read_protected'),
     },
   };
 }
@@ -151,6 +162,13 @@ export async function buildApp(
   );
   const quantumStore = new QuantumStore(database, now);
   const quantumService = new QuantumService(quantumStore, now);
+  const communicationStore = new CommunicationStore(database, now);
+  const communicationService = new CommunicationService(
+    communicationStore,
+    new CommunicationProviderRegistry([
+      new EvaluationCommunicationProvider(now, 'swiftclaim-evaluation-only'),
+    ]),
+  );
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -568,6 +586,15 @@ export async function buildApp(
 
   await app.register(quantumRoutes, {
     service: quantumService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(communicationRoutes, {
+    service: communicationService,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,
