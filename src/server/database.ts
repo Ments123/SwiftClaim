@@ -5,6 +5,8 @@ import { CommunicationProviderRegistry } from './communications/provider.js';
 import { CommunicationService } from './communications/service.js';
 import { CommunicationStore } from './communications/store.js';
 import { migrations, runMigrations } from './migrations/index.js';
+import { NegotiationService } from './negotiation/service.js';
+import { NegotiationStore } from './negotiation/store.js';
 import { IntakeConflictService } from './intake/conflicts.js';
 import { IntakeService } from './intake/service.js';
 import { IntakeStore } from './intake/store.js';
@@ -2328,5 +2330,273 @@ export function seedRepairsQuantumEvaluation(database: DatabaseSync): void {
       },
       audit,
     );
+  }
+}
+
+export function seedNegotiationSettlementEvaluation(database: DatabaseSync): void {
+  const now = () => new Date('2026-08-20T12:00:00.000Z');
+  const ava: SessionUser = {
+    id: SEED_IDS.ava,
+    firmId: SEED_IDS.northstarFirm,
+    firmName: 'Northstar Legal',
+    email: 'ava@northstar.test',
+    name: 'Ava Morgan',
+    role: 'solicitor',
+  };
+  const partner: SessionUser = {
+    ...ava,
+    id: SEED_IDS.partner,
+    email: 'partner@northstar.test',
+    name: 'Marcus Reed',
+    role: 'partner',
+  };
+  const audit = { requestId: 'seed-negotiation-settlement', ipAddress: '127.0.0.1' };
+  const service = new NegotiationService(new NegotiationStore(database, now));
+  const matterId = SEED_IDS.northstarMatter;
+  const telephoneSourceId = String((database.prepare(
+    `SELECT id FROM communication_entries WHERE firm_id = ? AND matter_id = ?
+     AND channel = 'telephone' ORDER BY occurred_at DESC LIMIT 1`,
+  ).get(ava.firmId, matterId) as { id: string }).id);
+  const externalSourceId = String((database.prepare(
+    `SELECT id FROM communication_entries WHERE firm_id = ? AND matter_id = ?
+     AND channel = 'whatsapp' AND direction = 'outbound'
+     ORDER BY occurred_at DESC LIMIT 1`,
+  ).get(ava.firmId, matterId) as { id: string }).id);
+  const protectedOfferId = String((database.prepare(
+    `SELECT id FROM offers WHERE firm_id = ? AND matter_id = ?
+     AND confidentiality <> 'open' ORDER BY made_on DESC LIMIT 1`,
+  ).get(ava.firmId, matterId) as { id: string }).id);
+
+  service.createReview(ava, matterId, {
+    idempotencyKey: 'seed-negotiation-advice-review',
+    confidentiality: 'protected_negotiation',
+    reviewedOn: '2026-08-20',
+    reviewerUserId: SEED_IDS.partner,
+    selectedOfferIds: [protectedOfferId],
+    lossScheduleId: null,
+    generalDamagesReviewId: null,
+    workScheduleId: null,
+    confirmedFacts: 'The current synthetic repairs, damages schedule and protected offer were reviewed.',
+    optionsExplained: 'Maya was given the options to accept, reject, counteroffer, continue negotiating or consider proceedings.',
+    riskAnalysis: 'Marcus and Ava recorded a human analysis of evidential, costs, timing and performance risks.',
+    costsFundingExplanation: 'Potential costs consequences and the recorded funding position were explained to Maya.',
+    humanRecommendation: 'Ava recommended a counteroffer while retaining the repair terms.',
+    adviceLimitations: 'SwiftClaim stores this human-authored review and makes no prediction or legal conclusion.',
+    clientQuestions: 'Maya asked how repair verification and the payment date would be recorded.',
+    supersedesReviewId: null,
+    correctionReason: '',
+  }, audit);
+
+  const authority = service.createAuthorityVersion(ava, matterId, {
+    idempotencyKey: 'seed-negotiation-authority-v1',
+    source: 'client_specific',
+    scope: 'Authority for one synthetic counteroffer between £3,000 and £3,500 retaining the repair schedule.',
+    actionTypes: ['counteroffer'],
+    minimumAmountMinor: 300_000,
+    maximumAmountMinor: 350_000,
+    nonMoneyConstraints: 'No liability admission may be represented as agreed.',
+    costsConstraints: 'Costs remain subject to separate agreement.',
+    repairConstraints: 'The approved repair schedule and evidence-based completion check remain required.',
+    expiresAt: null,
+    reviewOn: '2026-09-01',
+    requiresClientInstruction: true,
+    requiresPartnerApproval: true,
+    sourceDocumentVersionId: null,
+    reviewNote: 'Ava recorded the client-specific authority after checking the exact range and constraints.',
+  }, audit);
+
+  let action = service.createAction(ava, matterId, {
+    idempotencyKey: 'seed-negotiation-counteroffer-action',
+    actionType: 'counteroffer',
+    linkedOfferId: protectedOfferId,
+    confidentiality: 'protected_negotiation',
+    recipients: [{
+      displayName: 'Meridian Housing Legal Team',
+      endpointType: 'email',
+      endpoint: 'fictional-legal@example.test',
+    }],
+    scope: 'whole_claim',
+    scopeDescription: 'The complete synthetic Housing Conditions claim.',
+    damagesMinor: 325_000,
+    costsMinor: null,
+    totalMinor: 325_000,
+    currency: 'GBP',
+    worksTerms: 'Complete the approved repair schedule with evidence-based verification.',
+    nonMoneyTerms: 'No admission of liability is represented as agreed.',
+    interestTreatment: 'Interest remains reserved for human review.',
+    confidentialityTerms: 'Protected negotiation position.',
+    paymentTerms: 'Payment within 21 days of concluded terms.',
+    proposedInstrumentType: 'settlement_agreement',
+    documentVersionIds: [],
+  }, audit);
+  const actionInstruction = service.recordInstruction(ava, matterId, {
+    idempotencyKey: 'seed-counteroffer-exact-instruction',
+    confidentiality: 'protected_negotiation',
+    reviewId: null,
+    actionId: action.id,
+    actionVersionId: action.currentVersion.id,
+    instructionType: 'counter',
+    instructingPerson: 'Maya Clarke',
+    relationshipToClient: 'self',
+    authorityBasis: 'Maya is the client and gave her own instructions after the terms were read back.',
+    decisionNote: 'Make the exact £3,250 counteroffer while retaining the repair and verification terms.',
+    receivedMethod: 'telephone',
+    receivedAt: '2026-08-20T10:30:00.000Z',
+    identityStatus: 'confirmed',
+    identityNote: 'Name, address, date of birth and matter context were checked.',
+    understandingConfirmed: true,
+    accessibilityMeasures: 'The exact terms were explained verbally, paused for questions and read back.',
+    sourceCommunicationEntryId: telephoneSourceId,
+    sourceDocumentVersionId: null,
+    supersedesInstructionId: null,
+    correctionReason: '',
+    explicitClientInstruction: true,
+  }, audit);
+  if (!action.approvals.some(({ decision }) => decision === 'submitted')) {
+    action = service.submitAction(ava, matterId, action.id, {
+      expectedVersion: action.recordVersion,
+      idempotencyKey: 'seed-counteroffer-submit',
+      actionVersionId: action.currentVersion.id,
+      clientInstructionId: actionInstruction.id,
+      authorityVersionId: authority.id,
+      note: 'Ava submitted the exact instructed terms for the required separate partner decision.',
+    }, audit);
+  }
+  if (!action.approvals.some(({ decision }) => decision === 'approved')) {
+    service.decideAction(partner, matterId, action.id, {
+      expectedVersion: action.recordVersion,
+      idempotencyKey: 'seed-counteroffer-partner-approval',
+      actionVersionId: action.currentVersion.id,
+      clientInstructionId: actionInstruction.id,
+      authorityVersionId: authority.id,
+      decision: 'approved',
+      note: 'Marcus approved this exact immutable counteroffer version only.',
+    }, audit);
+  }
+
+  const initialSettlementInstruction = service.recordInstruction(ava, matterId, {
+    idempotencyKey: 'seed-settlement-initial-instruction',
+    confidentiality: 'privileged',
+    reviewId: null,
+    actionId: null,
+    actionVersionId: null,
+    instructionType: 'agree_terms',
+    instructingPerson: 'Maya Clarke',
+    relationshipToClient: 'self',
+    authorityBasis: 'Maya is the client and gave her own instructions.',
+    decisionNote: 'Prepare the synthetic settlement terms for exact review and confirmation.',
+    receivedMethod: 'telephone',
+    receivedAt: '2026-08-20T10:45:00.000Z',
+    identityStatus: 'confirmed',
+    identityNote: 'Name, address, date of birth and matter context were checked.',
+    understandingConfirmed: true,
+    accessibilityMeasures: 'The settlement recording process was explained and checked back.',
+    sourceCommunicationEntryId: telephoneSourceId,
+    sourceDocumentVersionId: null,
+    supersedesInstructionId: null,
+    correctionReason: '',
+    explicitClientInstruction: true,
+  }, audit);
+  let settlement = service.createSettlement(ava, matterId, {
+    idempotencyKey: 'seed-settlement-record',
+    settlementType: 'settlement_agreement',
+    scope: 'whole_claim',
+    confidentiality: 'privileged',
+    originatingActionId: null,
+    linkedOfferId: null,
+    clientInstructionId: initialSettlementInstruction.id,
+    title: 'Synthetic whole claim settlement and repair terms',
+  }, audit);
+  if (!settlement.currentTerms) {
+    settlement = service.appendSettlementTerms(ava, matterId, settlement.id, {
+      expectedVersion: settlement.recordVersion,
+      idempotencyKey: 'seed-settlement-terms-v1',
+      changeReason: 'Initial exact terms prepared following the human negotiation review.',
+      damagesMinor: 325_000,
+      costsMinor: null,
+      totalMinor: 325_000,
+      currency: 'GBP',
+      paymentMethod: 'Electronic transfer',
+      paymentDueAt: '2026-09-10T16:00:00.000Z',
+      repairTerms: 'Complete the approved repair schedule with independent evidence-based verification.',
+      accessTerms: 'Maya will provide access on reasonable written notice with agreed appointment windows.',
+      inspectionTerms: 'Completion will be checked against retained evidence and the approved schedule.',
+      liabilityAdmissionPosition: 'No admission of liability is recorded by SwiftClaim.',
+      interestTerms: 'Interest treatment was reviewed by the human solicitor.',
+      confidentialityTerms: 'The final instrument controls any confidentiality obligation.',
+      disposalTerms: 'The claim disposal mechanism requires human review of the retained instrument.',
+      enforcementTerms: 'SwiftClaim makes no conclusion about enforceability.',
+      otherTerms: '',
+      sourceDocumentVersionIds: [],
+      reviewNote: 'Ava reviewed each structured term and its relationship to the recorded position.',
+    }, audit);
+  }
+  const terms = settlement.currentTerms;
+  if (!terms) throw new Error('The Maya settlement terms were not created');
+  const exactSettlementInstruction = service.recordInstruction(ava, matterId, {
+    idempotencyKey: 'seed-settlement-exact-instruction',
+    confidentiality: 'privileged',
+    reviewId: null,
+    actionId: null,
+    actionVersionId: null,
+    settlementId: settlement.id,
+    settlementTermsVersionId: terms.id,
+    instructionType: 'agree_terms',
+    instructingPerson: 'Maya Clarke',
+    relationshipToClient: 'self',
+    authorityBasis: 'Maya is the client and confirmed the exact terms after read-back.',
+    decisionNote: 'Agree the exact first immutable settlement terms version.',
+    receivedMethod: 'telephone',
+    receivedAt: '2026-08-20T11:00:00.000Z',
+    identityStatus: 'confirmed',
+    identityNote: 'Name, address, date of birth and matter context were checked.',
+    understandingConfirmed: true,
+    accessibilityMeasures: 'Every material term was read back and Maya confirmed understanding.',
+    sourceCommunicationEntryId: telephoneSourceId,
+    sourceDocumentVersionId: null,
+    supersedesInstructionId: null,
+    correctionReason: '',
+    explicitClientInstruction: true,
+  }, audit);
+  if (settlement.projection.state !== 'concluded') {
+    settlement = service.concludeSettlement(partner, matterId, settlement.id, {
+      expectedVersion: settlement.recordVersion,
+      idempotencyKey: 'seed-settlement-conclusion',
+      termsVersionId: terms.id,
+      clientInstructionId: exactSettlementInstruction.id,
+      courtApprovalPosition: 'not_required_reviewed',
+      instrumentDocumentVersionId: null,
+      sourceCommunicationEntryId: externalSourceId,
+      conclusionNote: 'Marcus confirmed the exact terms, retained source and reviewed court-approval position.',
+      obligationsReviewed: true,
+      explicitHumanConfirmation: true,
+    }, audit);
+  }
+  const payment = service.createObligation(ava, matterId, settlement.id, {
+    idempotencyKey: 'seed-settlement-payment-obligation',
+    settlementTermsVersionId: terms.id,
+    obligationType: 'payment',
+    responsibleParty: 'Meridian Housing',
+    beneficiary: 'Maya Clarke',
+    description: 'Pay the exact recorded settlement damages amount.',
+    amountMinor: 325_000,
+    dueAt: '2026-09-10T16:00:00.000Z',
+    timezone: 'Europe/London',
+    evidenceRequirement: 'Retained payment confirmation or client receipt communication.',
+  }, audit);
+  if (payment.events.length === 0) {
+    service.recordObligationEvent(ava, matterId, payment.id, {
+      idempotencyKey: 'seed-payment-performance-asserted',
+      eventType: 'performance_asserted',
+      occurredAt: '2026-09-10T14:00:00.000Z',
+      note: 'The fictional opponent asserted that payment was made; client receipt is not yet evidenced.',
+      amountSatisfiedMinor: 325_000,
+      evidenceDocumentVersionIds: [],
+      evidenceCommunicationEntryIds: [],
+      supersedesEventId: null,
+      correctionReason: '',
+      waiverAuthorityDocumentVersionId: null,
+      explicitConfirmation: true,
+    }, audit);
   }
 }

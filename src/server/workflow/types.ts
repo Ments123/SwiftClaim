@@ -39,6 +39,7 @@ export interface WorkflowStageDefinition {
   position: number;
   description: string;
   requiredChecklistKeys: readonly string[];
+  allowedNextStageKeys: readonly string[];
 }
 
 export interface WorkflowDefinition {

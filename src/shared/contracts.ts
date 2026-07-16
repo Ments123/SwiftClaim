@@ -1607,6 +1607,389 @@ export const recordCommunicationCallSchema = z
     }
   });
 
+const negotiationUuidSchema = z.string().uuid();
+const negotiationNullableUuidSchema = negotiationUuidSchema.nullable();
+const negotiationIdempotencyKeySchema = z.string().trim().min(8).max(200);
+const negotiationMoneySchema = z.number().int().nonnegative().safe();
+const negotiationNullableMoneySchema = negotiationMoneySchema.nullable();
+const negotiationDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const negotiationConfidentialitySchema = z.enum([
+  'ordinary',
+  'privileged',
+  'protected_negotiation',
+]);
+
+const negotiationRecipientSchema = z.object({
+  displayName: z.string().trim().min(2).max(240),
+  endpointType: z.enum(['email', 'whatsapp', 'postal_address', 'portal', 'other']),
+  endpoint: z.string().trim().min(3).max(1_000),
+}).strict();
+
+export const createNegotiationReviewSchema = z.object({
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  confidentiality: negotiationConfidentialitySchema,
+  reviewedOn: negotiationDateSchema,
+  reviewerUserId: negotiationNullableUuidSchema,
+  selectedOfferIds: z.array(negotiationUuidSchema).max(100).default([]),
+  lossScheduleId: negotiationNullableUuidSchema,
+  generalDamagesReviewId: negotiationNullableUuidSchema,
+  workScheduleId: negotiationNullableUuidSchema,
+  confirmedFacts: z.string().trim().min(10).max(12_000),
+  optionsExplained: z.string().trim().min(10).max(12_000),
+  riskAnalysis: z.string().trim().min(10).max(12_000),
+  costsFundingExplanation: z.string().trim().min(10).max(8_000),
+  humanRecommendation: z.string().trim().max(8_000).default(''),
+  adviceLimitations: z.string().trim().min(10).max(8_000),
+  clientQuestions: z.string().trim().max(8_000).default(''),
+  supersedesReviewId: negotiationNullableUuidSchema,
+  correctionReason: z.string().trim().max(2_000).default(''),
+}).strict().superRefine((input, context) => {
+  if (input.supersedesReviewId && input.correctionReason.length < 10) {
+    context.addIssue({
+      code: 'custom',
+      path: ['correctionReason'],
+      message: 'A superseding review requires a correction reason.',
+    });
+  }
+});
+
+export const recordClientInstructionSchema = z.object({
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  confidentiality: negotiationConfidentialitySchema,
+  reviewId: negotiationNullableUuidSchema,
+  actionId: negotiationNullableUuidSchema,
+  actionVersionId: negotiationNullableUuidSchema,
+  settlementId: negotiationNullableUuidSchema.optional(),
+  settlementTermsVersionId: negotiationNullableUuidSchema.optional(),
+  instructionType: z.enum([
+    'accept',
+    'reject',
+    'counter',
+    'clarify',
+    'continue_negotiation',
+    'issue_proceedings',
+    'agree_terms',
+    'other',
+  ]),
+  instructingPerson: z.string().trim().min(2).max(240),
+  relationshipToClient: z.string().trim().min(2).max(240),
+  authorityBasis: z.string().trim().min(10).max(4_000),
+  decisionNote: z.string().trim().min(10).max(8_000),
+  receivedMethod: z.enum(['in_person', 'telephone', 'video', 'email', 'letter', 'portal', 'other']),
+  receivedAt: z.string().datetime({ offset: true }),
+  identityStatus: z.enum(['confirmed', 'failed', 'not_required_reviewed']),
+  identityNote: z.string().trim().min(10).max(2_000),
+  understandingConfirmed: z.boolean(),
+  accessibilityMeasures: z.string().trim().min(5).max(4_000),
+  sourceCommunicationEntryId: negotiationNullableUuidSchema,
+  sourceDocumentVersionId: negotiationNullableUuidSchema,
+  supersedesInstructionId: negotiationNullableUuidSchema,
+  correctionReason: z.string().trim().max(2_000).default(''),
+  explicitClientInstruction: z.literal(true),
+}).strict().superRefine((input, context) => {
+  if (Boolean(input.actionId) !== Boolean(input.actionVersionId)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['actionVersionId'],
+      message: 'An action instruction must identify both the action and exact version.',
+    });
+  }
+  if (Boolean(input.settlementId) !== Boolean(input.settlementTermsVersionId)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['settlementTermsVersionId'],
+      message: 'A settlement instruction must identify both the settlement and exact terms version.',
+    });
+  }
+  if (input.actionId && input.settlementId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['settlementId'],
+      message: 'Record action and settlement instructions separately.',
+    });
+  }
+  if (!input.sourceCommunicationEntryId && !input.sourceDocumentVersionId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['sourceCommunicationEntryId'],
+      message: 'Retain the communication or document evidencing the instruction.',
+    });
+  }
+  if (!input.understandingConfirmed) {
+    context.addIssue({
+      code: 'custom',
+      path: ['understandingConfirmed'],
+      message: 'Record instructions only after understanding has been checked.',
+    });
+  }
+  if (input.supersedesInstructionId && input.correctionReason.length < 10) {
+    context.addIssue({
+      code: 'custom',
+      path: ['correctionReason'],
+      message: 'A superseding instruction requires a correction reason.',
+    });
+  }
+});
+
+const negotiationActionTypeSchema = z.enum([
+  'make_offer',
+  'counteroffer',
+  'accept',
+  'reject',
+  'withdraw',
+  'clarify',
+  'record_agreement',
+]);
+
+export const createSettlementAuthorityVersionSchema = z.object({
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  source: z.enum(['client_specific', 'retainer', 'firm_policy', 'court_or_representative', 'other']),
+  scope: z.string().trim().min(10).max(4_000),
+  actionTypes: z.array(negotiationActionTypeSchema).min(1).max(20),
+  minimumAmountMinor: negotiationNullableMoneySchema,
+  maximumAmountMinor: negotiationNullableMoneySchema,
+  nonMoneyConstraints: z.string().trim().max(4_000).default(''),
+  costsConstraints: z.string().trim().max(4_000).default(''),
+  repairConstraints: z.string().trim().max(4_000).default(''),
+  expiresAt: z.string().datetime({ offset: true }).nullable(),
+  reviewOn: negotiationDateSchema.nullable(),
+  requiresClientInstruction: z.boolean(),
+  requiresPartnerApproval: z.boolean(),
+  sourceDocumentVersionId: negotiationNullableUuidSchema,
+  reviewNote: z.string().trim().min(10).max(4_000),
+}).strict().superRefine((input, context) => {
+  if (
+    input.minimumAmountMinor !== null &&
+    input.maximumAmountMinor !== null &&
+    input.maximumAmountMinor < input.minimumAmountMinor
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['maximumAmountMinor'],
+      message: 'The maximum authority cannot be below the minimum.',
+    });
+  }
+});
+
+const negotiationActionFields = {
+  actionType: negotiationActionTypeSchema,
+  linkedOfferId: negotiationNullableUuidSchema,
+  confidentiality: negotiationConfidentialitySchema,
+  recipients: z.array(negotiationRecipientSchema).min(1).max(100),
+  scope: z.enum(['whole_claim', 'part_of_claim', 'issue', 'costs_only', 'works_only']),
+  scopeDescription: z.string().trim().min(10).max(4_000),
+  damagesMinor: negotiationNullableMoneySchema,
+  costsMinor: negotiationNullableMoneySchema,
+  totalMinor: negotiationNullableMoneySchema,
+  currency: z.literal('GBP'),
+  worksTerms: z.string().trim().max(8_000).default(''),
+  nonMoneyTerms: z.string().trim().max(8_000).default(''),
+  interestTreatment: z.string().trim().max(4_000).default(''),
+  confidentialityTerms: z.string().trim().max(4_000).default(''),
+  paymentTerms: z.string().trim().max(4_000).default(''),
+  proposedInstrumentType: z.enum([
+    'part36_acceptance',
+    'consent_order',
+    'tomlin_order',
+    'settlement_agreement',
+    'deed',
+    'oral_recorded',
+    'other',
+  ]),
+  documentVersionIds: z.array(negotiationUuidSchema).max(100).default([]),
+};
+
+export const createNegotiationActionSchema = z.object({
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  ...negotiationActionFields,
+}).strict();
+
+export const appendNegotiationActionVersionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  changeReason: z.string().trim().min(10).max(2_000),
+  ...negotiationActionFields,
+}).strict();
+
+export const submitNegotiationActionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  actionVersionId: negotiationUuidSchema,
+  clientInstructionId: negotiationUuidSchema,
+  authorityVersionId: negotiationUuidSchema,
+  note: z.string().trim().min(10).max(2_000),
+}).strict();
+
+export const decideNegotiationActionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  actionVersionId: negotiationUuidSchema,
+  clientInstructionId: negotiationUuidSchema,
+  authorityVersionId: negotiationUuidSchema,
+  decision: z.enum(['approved', 'rejected']),
+  note: z.string().trim().min(10).max(2_000),
+}).strict();
+
+export const recordNegotiationExternalActionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  actionVersionId: negotiationUuidSchema,
+  occurredAt: z.string().datetime({ offset: true }),
+  method: z.enum(['email', 'whatsapp', 'letter', 'portal', 'telephone', 'in_person', 'other']),
+  recipient: z.string().trim().min(2).max(1_000),
+  sourceCommunicationEntryId: negotiationNullableUuidSchema,
+  sourceDocumentVersionId: negotiationNullableUuidSchema,
+  factualNote: z.string().trim().min(10).max(4_000),
+  explicitConfirmation: z.literal(true),
+}).strict().superRefine((input, context) => {
+  if (!input.sourceCommunicationEntryId && !input.sourceDocumentVersionId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['sourceCommunicationEntryId'],
+      message: 'An external action requires a retained communication or document source.',
+    });
+  }
+});
+
+export const createSettlementSchema = z.object({
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  settlementType: z.enum([
+    'part36_acceptance',
+    'consent_order',
+    'tomlin_order',
+    'settlement_agreement',
+    'deed',
+    'oral_recorded',
+    'other',
+  ]),
+  scope: z.enum(['whole_claim', 'part_of_claim', 'issue', 'costs_only', 'works_only']),
+  confidentiality: negotiationConfidentialitySchema,
+  originatingActionId: negotiationNullableUuidSchema,
+  linkedOfferId: negotiationNullableUuidSchema,
+  clientInstructionId: negotiationUuidSchema,
+  title: z.string().trim().min(5).max(240),
+}).strict();
+
+const settlementTermsFields = {
+  damagesMinor: negotiationNullableMoneySchema,
+  costsMinor: negotiationNullableMoneySchema,
+  totalMinor: negotiationNullableMoneySchema,
+  currency: z.literal('GBP'),
+  paymentMethod: z.string().trim().max(240).default(''),
+  paymentDueAt: z.string().datetime({ offset: true }).nullable(),
+  repairTerms: z.string().trim().max(12_000).default(''),
+  accessTerms: z.string().trim().max(8_000).default(''),
+  inspectionTerms: z.string().trim().max(8_000).default(''),
+  liabilityAdmissionPosition: z.string().trim().max(4_000).default(''),
+  interestTerms: z.string().trim().max(4_000).default(''),
+  confidentialityTerms: z.string().trim().max(8_000).default(''),
+  disposalTerms: z.string().trim().max(8_000).default(''),
+  enforcementTerms: z.string().trim().max(8_000).default(''),
+  otherTerms: z.string().trim().max(12_000).default(''),
+  sourceDocumentVersionIds: z.array(negotiationUuidSchema).max(100).default([]),
+  reviewNote: z.string().trim().min(10).max(4_000),
+};
+
+export const appendSettlementTermsSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  changeReason: z.string().trim().min(10).max(2_000),
+  ...settlementTermsFields,
+}).strict();
+
+export const concludeSettlementSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  termsVersionId: negotiationUuidSchema,
+  clientInstructionId: negotiationUuidSchema,
+  courtApprovalPosition: z.enum(['unknown', 'not_required_reviewed', 'required', 'obtained']),
+  instrumentDocumentVersionId: negotiationNullableUuidSchema,
+  sourceCommunicationEntryId: negotiationNullableUuidSchema,
+  conclusionNote: z.string().trim().min(10).max(4_000),
+  obligationsReviewed: z.literal(true),
+  explicitHumanConfirmation: z.literal(true),
+}).strict().superRefine((input, context) => {
+  if (input.courtApprovalPosition === 'unknown' || input.courtApprovalPosition === 'required') {
+    context.addIssue({
+      code: 'custom',
+      path: ['courtApprovalPosition'],
+      message: 'The court approval position must be reviewed and any required approval obtained.',
+    });
+  }
+  if (!input.instrumentDocumentVersionId && !input.sourceCommunicationEntryId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['instrumentDocumentVersionId'],
+      message: 'Retain the settlement instrument or source communication.',
+    });
+  }
+});
+
+export const createSettlementObligationSchema = z.object({
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  settlementTermsVersionId: negotiationUuidSchema,
+  obligationType: z.enum([
+    'payment', 'costs', 'repair', 'access', 'inspection',
+    'document', 'filing', 'confidentiality', 'other',
+  ]),
+  responsibleParty: z.string().trim().min(2).max(500),
+  beneficiary: z.string().trim().min(2).max(500),
+  description: z.string().trim().min(10).max(8_000),
+  amountMinor: negotiationNullableMoneySchema,
+  dueAt: z.string().datetime({ offset: true }).nullable(),
+  timezone: z.string().trim().min(3).max(100),
+  evidenceRequirement: z.string().trim().min(5).max(4_000),
+}).strict();
+
+export const recordSettlementObligationEventSchema = z.object({
+  idempotencyKey: negotiationIdempotencyKeySchema,
+  eventType: z.enum([
+    'due_confirmed', 'performance_asserted', 'part_satisfied', 'satisfied',
+    'overdue_reviewed', 'disputed', 'waived', 'corrected',
+  ]),
+  occurredAt: z.string().datetime({ offset: true }),
+  note: z.string().trim().min(10).max(4_000),
+  amountSatisfiedMinor: negotiationNullableMoneySchema,
+  evidenceDocumentVersionIds: z.array(negotiationUuidSchema).max(100).default([]),
+  evidenceCommunicationEntryIds: z.array(negotiationUuidSchema).max(100).default([]),
+  supersedesEventId: negotiationNullableUuidSchema,
+  correctionReason: z.string().trim().max(2_000).default(''),
+  waiverAuthorityDocumentVersionId: negotiationNullableUuidSchema,
+  explicitConfirmation: z.literal(true),
+}).strict().superRefine((input, context) => {
+  if (
+    input.eventType === 'satisfied' &&
+    input.evidenceDocumentVersionIds.length === 0 &&
+    input.evidenceCommunicationEntryIds.length === 0
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['evidenceDocumentVersionIds'],
+      message: 'Satisfied obligations require retained evidence.',
+    });
+  }
+  if (input.eventType === 'waived' && !input.waiverAuthorityDocumentVersionId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['waiverAuthorityDocumentVersionId'],
+      message: 'A waiver requires a retained authority source.',
+    });
+  }
+  if (input.eventType === 'corrected' && !input.supersedesEventId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['supersedesEventId'],
+      message: 'A correction must identify the corrected event.',
+    });
+  }
+  if (input.supersedesEventId && input.correctionReason.length < 10) {
+    context.addIssue({
+      code: 'custom',
+      path: ['correctionReason'],
+      message: 'A correction reason of at least 10 characters is required.',
+    });
+  }
+});
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -1670,6 +2053,19 @@ export type DecideCommunicationDraftInput = z.infer<typeof decideCommunicationDr
 export type DispatchCommunicationInput = z.infer<typeof dispatchCommunicationSchema>;
 export type RecordCommunicationProviderEventInput = z.infer<typeof recordCommunicationProviderEventSchema>;
 export type RecordCommunicationCallInput = z.infer<typeof recordCommunicationCallSchema>;
+export type CreateNegotiationReviewInput = z.infer<typeof createNegotiationReviewSchema>;
+export type RecordClientInstructionInput = z.infer<typeof recordClientInstructionSchema>;
+export type CreateSettlementAuthorityVersionInput = z.infer<typeof createSettlementAuthorityVersionSchema>;
+export type CreateNegotiationActionInput = z.infer<typeof createNegotiationActionSchema>;
+export type AppendNegotiationActionVersionInput = z.infer<typeof appendNegotiationActionVersionSchema>;
+export type SubmitNegotiationActionInput = z.infer<typeof submitNegotiationActionSchema>;
+export type DecideNegotiationActionInput = z.infer<typeof decideNegotiationActionSchema>;
+export type RecordNegotiationExternalActionInput = z.infer<typeof recordNegotiationExternalActionSchema>;
+export type CreateSettlementInput = z.infer<typeof createSettlementSchema>;
+export type AppendSettlementTermsInput = z.infer<typeof appendSettlementTermsSchema>;
+export type ConcludeSettlementInput = z.infer<typeof concludeSettlementSchema>;
+export type CreateSettlementObligationInput = z.infer<typeof createSettlementObligationSchema>;
+export type RecordSettlementObligationEventInput = z.infer<typeof recordSettlementObligationEventSchema>;
 
 export interface ApiErrorBody {
   error: {

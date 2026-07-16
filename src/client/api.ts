@@ -1026,6 +1026,96 @@ export interface CommunicationWorkspace {
   providerCapabilities: CommunicationProviderCapabilities[];
 }
 
+export interface NegotiationReviewRecord {
+  id: string;
+  reviewNumber: number;
+  confidentiality: 'ordinary' | 'privileged' | 'protected_negotiation';
+  reviewedOn: string;
+  confirmedFacts: string;
+  optionsExplained: string;
+  riskAnalysis: string;
+  costsFundingExplanation: string;
+  humanRecommendation: string;
+  adviceLimitations: string;
+  clientQuestions: string;
+  sourceManifestDigest: string;
+  supersedesReviewId: string | null;
+  createdAt: string;
+}
+
+export interface ClientInstructionRecord {
+  id: string;
+  confidentiality: NegotiationReviewRecord['confidentiality'];
+  instructionType: string;
+  instructingPerson: string;
+  decisionNote: string;
+  receivedMethod: string;
+  receivedAt: string;
+  identityStatus: string;
+  actionVersion: number | null;
+  settlementTermsVersion: number | null;
+  supersedesInstructionId: string | null;
+}
+
+export interface SettlementAuthorityRecord {
+  id: string;
+  version: number;
+  source: string;
+  scope: string;
+  actionTypes: string[];
+  minimumAmountMinor: number | null;
+  maximumAmountMinor: number | null;
+  requiresClientInstruction: boolean;
+  requiresPartnerApproval: boolean;
+  expiresAt: string | null;
+  reviewOn: string | null;
+  reviewNote: string;
+}
+
+export interface NegotiationActionRecord {
+  id: string;
+  actionReference: string;
+  recordVersion: number;
+  actionType: string;
+  confidentiality: NegotiationReviewRecord['confidentiality'];
+  currentVersion: { id: string; version: number; totalMinor: number | null; currency: string };
+  projection: {
+    state: string;
+    instructionCurrent: boolean;
+    approvalCurrent: boolean;
+    canRecordExternalAction: boolean;
+  };
+}
+
+export interface SettlementRecord {
+  id: string;
+  settlementReference: string;
+  recordVersion: number;
+  settlementType: string;
+  confidentiality: NegotiationReviewRecord['confidentiality'];
+  title: string;
+  courtApprovalPosition: string;
+  currentTerms: null | {
+    id: string;
+    version: number;
+    totalMinor: number | null;
+    currency: string;
+    paymentDueAt: string | null;
+    repairTerms: string;
+    termsDigest: string;
+  };
+  projection: { state: string; canConclude: boolean };
+}
+
+export interface NegotiationWorkspace {
+  matterId: string;
+  reviews: NegotiationReviewRecord[];
+  instructions: ClientInstructionRecord[];
+  actions: NegotiationActionRecord[];
+  settlements: SettlementRecord[];
+  currentAuthority: SettlementAuthorityRecord | null;
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'
@@ -1036,6 +1126,7 @@ export type MatterSection =
   | 'communications'
   | 'protocol_experts'
   | 'damages_offers'
+  | 'negotiation_settlement'
   | 'proceedings'
   | 'tasks_calendar'
   | 'time_finance'

@@ -39,6 +39,15 @@ export type Capability =
   | 'communications.read_privileged'
   | 'communications.read_protected'
   | 'communications.manage_provider'
+  | 'negotiation.read'
+  | 'negotiation.read_protected'
+  | 'negotiation.prepare'
+  | 'negotiation.record_instruction'
+  | 'negotiation.approve'
+  | 'negotiation.record_external_action'
+  | 'settlement.manage'
+  | 'settlement.conclude'
+  | 'settlement.waive_obligation'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -72,6 +81,15 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'communications.read_privileged',
     'communications.read_protected',
     'communications.manage_provider',
+    'negotiation.read',
+    'negotiation.read_protected',
+    'negotiation.prepare',
+    'negotiation.record_instruction',
+    'negotiation.approve',
+    'negotiation.record_external_action',
+    'settlement.manage',
+    'settlement.conclude',
+    'settlement.waive_obligation',
     'administration.view',
   ],
   partner: [
@@ -104,6 +122,15 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'communications.read_privileged',
     'communications.read_protected',
     'communications.manage_provider',
+    'negotiation.read',
+    'negotiation.read_protected',
+    'negotiation.prepare',
+    'negotiation.record_instruction',
+    'negotiation.approve',
+    'negotiation.record_external_action',
+    'settlement.manage',
+    'settlement.conclude',
+    'settlement.waive_obligation',
     'administration.view',
   ],
   solicitor: [
@@ -129,6 +156,13 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'communications.send',
     'communications.read_privileged',
     'communications.read_protected',
+    'negotiation.read',
+    'negotiation.read_protected',
+    'negotiation.prepare',
+    'negotiation.record_instruction',
+    'negotiation.record_external_action',
+    'settlement.manage',
+    'settlement.conclude',
   ],
   paralegal: [
     'matter.read',
@@ -144,6 +178,8 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'offers.write',
     'communications.read',
     'communications.write',
+    'negotiation.read',
+    'negotiation.prepare',
   ],
   finance: ['matter.read'],
   readonly: ['matter.read', 'communications.read'],

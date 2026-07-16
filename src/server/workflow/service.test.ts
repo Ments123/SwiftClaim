@@ -8,6 +8,7 @@ import { MatterStore } from '../store.js';
 import {
   WorkflowError,
   WorkflowService,
+  type NegotiationReadinessProvider,
   type ProtocolReadinessProvider,
   type QuantumReadinessProvider,
 } from './service.js';
@@ -630,5 +631,45 @@ describe('WorkflowService', () => {
     ).toThrowError(
       expect.objectContaining<Partial<WorkflowError>>({ code: 'CONFLICT' }),
     );
+  });
+  it('allows the explicit negotiation to settlement path but rejects unconfigured jumps', () => {
+    database.prepare(
+      `UPDATE matter_workflows SET current_stage_key = 'negotiation', version = 7
+       WHERE firm_id = ? AND matter_id = ?`,
+    ).run(SEED_IDS.northstarFirm, TEST_MATTER_ID);
+    const negotiationReadiness: NegotiationReadinessProvider = {
+      getNegotiationReadiness: () => ({
+        controls: [{
+          key: 'settlement_authority_recorded',
+          eligible: true,
+          explanation: 'Current settlement authority is recorded.',
+        }],
+        progressionBlockers: [],
+      }),
+    };
+    const negotiationService = new WorkflowService(
+      new MatterStore(database, () => FIXED_NOW),
+      workflowStore,
+      () => FIXED_NOW,
+      undefined,
+      undefined,
+      undefined,
+      negotiationReadiness,
+    );
+
+    expect(() => negotiationService.transitionStage(ava, TEST_MATTER_ID, {
+      toStageKey: 'closure',
+      expectedVersion: 7,
+      completedChecklistKeys: ['settlement_authority_recorded'],
+      reason: 'Attempting an unconfigured workflow stage jump for evaluation.',
+    }, AUDIT_CONTEXT)).toThrowError(expect.objectContaining({ code: 'READINESS_BLOCKED' }));
+
+    const result = negotiationService.transitionStage(ava, TEST_MATTER_ID, {
+      toStageKey: 'settlement',
+      expectedVersion: 7,
+      completedChecklistKeys: ['settlement_authority_recorded'],
+      reason: 'Exact settlement terms were agreed before proceedings were issued.',
+    }, AUDIT_CONTEXT);
+    expect(result.workflow.currentStageKey).toBe('settlement');
   });
 });

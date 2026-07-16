@@ -5,6 +5,7 @@ import { buildApp } from './app.js';
 import {
   createDatabase,
   seedCommunicationsEvaluation,
+  seedNegotiationSettlementEvaluation,
   seedDatabase,
   seedProtocolExpertsEvaluation,
   seedRepairsQuantumEvaluation,
@@ -43,6 +44,7 @@ if (shouldSeed) {
   await seedProtocolExpertsEvaluation(database, storagePath);
   seedRepairsQuantumEvaluation(database);
   await seedCommunicationsEvaluation(database);
+  seedNegotiationSettlementEvaluation(database);
 }
 
 const app = await buildApp({

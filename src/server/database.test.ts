@@ -118,6 +118,18 @@ describe('canonical database', () => {
         'part_36_terms',
         'offer_events',
         'quantum_command_receipts',
+        'negotiation_reviews',
+        'client_instructions',
+        'settlement_authority_versions',
+        'negotiation_actions',
+        'negotiation_action_versions',
+        'negotiation_approval_events',
+        'negotiation_external_acts',
+        'settlements',
+        'settlement_term_versions',
+        'settlement_obligations',
+        'settlement_obligation_events',
+        'negotiation_command_receipts',
       ]),
     );
     expect(database.prepare('PRAGMA foreign_keys').get()).toEqual({
@@ -171,7 +183,68 @@ describe('canonical database', () => {
         name: 'governed communications',
         checksumLength: 64,
       },
+      {
+        version: 8,
+        name: 'negotiation and settlement authority',
+        checksumLength: 64,
+      },
     ]);
+  });
+
+  it('rejects a negotiation authority source document from another matter', () => {
+    database = createDatabase(':memory:');
+    seedDatabase(database);
+    const documentId = 'aa000000-0000-4000-8000-000000000001';
+    const versionId = 'aa000000-0000-4000-8000-000000000002';
+    database.prepare(
+      `INSERT INTO documents (
+        id, firm_id, matter_id, title, category, external_source,
+        external_id, import_batch_id, created_by, created_at
+      ) VALUES (?, ?, ?, 'Restricted source', 'authority', NULL, NULL, NULL, ?, ?)`,
+    ).run(
+      documentId,
+      SEED_IDS.northstarFirm,
+      SEED_IDS.northstarRestrictedMatter,
+      SEED_IDS.ava,
+      FIXED_NOW.toISOString(),
+    );
+    database.prepare(
+      `INSERT INTO document_versions (
+        id, firm_id, document_id, version, original_name, mime_type,
+        size_bytes, sha256, storage_key, uploaded_by, created_at
+      ) VALUES (?, ?, ?, 1, 'authority.pdf', 'application/pdf', 1, ?, ?, ?, ?)`,
+    ).run(
+      versionId,
+      SEED_IDS.northstarFirm,
+      documentId,
+      'a'.repeat(64),
+      `test/${versionId}`,
+      SEED_IDS.ava,
+      FIXED_NOW.toISOString(),
+    );
+
+    expect(() => database?.prepare(
+      `INSERT INTO settlement_authority_versions (
+        id, firm_id, matter_id, version, source, scope, action_types_json,
+        minimum_amount_minor, maximum_amount_minor, non_money_constraints,
+        costs_constraints, repair_constraints, expires_at, review_on,
+        requires_client_instruction, requires_partner_approval,
+        source_document_id, source_document_version_id, review_note,
+        supersedes_authority_id, idempotency_key, command_payload_json,
+        created_by, created_at
+      ) VALUES (?, ?, ?, 1, 'client_specific', 'Exact authority',
+        '["counteroffer"]', NULL, NULL, '', '', '', NULL, NULL, 1, 1,
+        ?, ?, 'Reviewed authority source.', NULL, 'authority-cross-matter',
+        '{}', ?, ?)`,
+    ).run(
+      'aa000000-0000-4000-8000-000000000003',
+      SEED_IDS.northstarFirm,
+      SEED_IDS.northstarMatter,
+      documentId,
+      versionId,
+      SEED_IDS.ava,
+      FIXED_NOW.toISOString(),
+    )).toThrow();
   });
 
   it('enforces evidence versions, tenant links and append-only records', () => {

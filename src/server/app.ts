@@ -35,6 +35,10 @@ import { IntakeConflictService } from './intake/conflicts.js';
 import { intakeRoutes } from './intake/routes.js';
 import { IntakeService } from './intake/service.js';
 import { IntakeStore } from './intake/store.js';
+import { DatabaseNegotiationReadiness } from './negotiation/readiness.js';
+import { negotiationRoutes } from './negotiation/routes.js';
+import { NegotiationService } from './negotiation/service.js';
+import { NegotiationStore } from './negotiation/store.js';
 import { canCreateMatter, hasCapability, type SessionUser } from './policy.js';
 import { protocolRoutes } from './protocol/routes.js';
 import { ProtocolService } from './protocol/service.js';
@@ -135,6 +139,15 @@ function publicUser(user: SessionUser) {
       canSendCommunications: hasCapability(user, 'communications.send'),
       canReadPrivilegedCommunications: hasCapability(user, 'communications.read_privileged'),
       canReadProtectedCommunications: hasCapability(user, 'communications.read_protected'),
+      canReadNegotiation: hasCapability(user, 'negotiation.read'),
+      canReadProtectedNegotiation: hasCapability(user, 'negotiation.read_protected'),
+      canPrepareNegotiation: hasCapability(user, 'negotiation.prepare'),
+      canRecordNegotiationInstruction: hasCapability(user, 'negotiation.record_instruction'),
+      canApproveNegotiation: hasCapability(user, 'negotiation.approve'),
+      canRecordExternalNegotiationAction: hasCapability(user, 'negotiation.record_external_action'),
+      canManageSettlement: hasCapability(user, 'settlement.manage'),
+      canConcludeSettlement: hasCapability(user, 'settlement.conclude'),
+      canWaiveSettlementObligation: hasCapability(user, 'settlement.waive_obligation'),
     },
   };
 }
@@ -169,6 +182,9 @@ export async function buildApp(
       new EvaluationCommunicationProvider(now, 'swiftclaim-evaluation-only'),
     ]),
   );
+  const negotiationStore = new NegotiationStore(database, now);
+  const negotiationService = new NegotiationService(negotiationStore);
+  const negotiationReadiness = new DatabaseNegotiationReadiness(database, now);
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -176,6 +192,7 @@ export async function buildApp(
     evidenceService,
     protocolService,
     quantumService,
+    negotiationReadiness,
   );
   const intakeStore = new IntakeStore(database, now);
   const intakeService = new IntakeService(
@@ -595,6 +612,15 @@ export async function buildApp(
 
   await app.register(communicationRoutes, {
     service: communicationService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(negotiationRoutes, {
+    service: negotiationService,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,
