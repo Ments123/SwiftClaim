@@ -1170,10 +1170,17 @@ export interface ProceedingsWorkspace {
   directions: CourtDirectionRecord[];
   hearings: CourtHearingRecord[];
   risks: Array<{ key?: string; severity?: string; title?: string; detail?: string }>;
+  sources?: {
+    documents: Array<{ id: string; title: string; version: number; originalName: string }>;
+    parties: Array<{ id: string; name: string; kind: string }>;
+    users: Array<{ id: string; name: string; role: string }>;
+    clientInstructions: Array<{ id: string; instructionType: string; instructingPerson: string; receivedAt: string }>;
+  };
   permissions?: {
     canRead: boolean; canPrepare: boolean; canApproveIssue: boolean;
     canRecordExternal: boolean; canManageDirections: boolean;
     canManageHearings: boolean; canRecordOrder: boolean;
+    canRecordRelief: boolean;
   };
 }
 
