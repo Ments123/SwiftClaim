@@ -9,6 +9,7 @@ import {
   seedDatabase,
   seedProtocolExpertsEvaluation,
   seedProceedingsEvaluation,
+  seedPleadingsEvaluation,
   seedRepairsQuantumEvaluation,
 } from './database.js';
 
@@ -47,6 +48,7 @@ if (shouldSeed) {
   await seedCommunicationsEvaluation(database);
   seedNegotiationSettlementEvaluation(database);
   seedProceedingsEvaluation(database);
+  seedPleadingsEvaluation(database);
 }
 
 const app = await buildApp({

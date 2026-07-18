@@ -101,4 +101,16 @@ describe('role capabilities', () => {
     expect(hasCapability(user('finance'), 'proceedings.read')).toBe(false);
     expect(hasCapability(user('readonly'), 'proceedings.read')).toBe(false);
   });
+
+  it('separates pleading preparation, claimant approval and default review', () => {
+    expect(hasCapability(user('partner'), 'pleadings.record_amendment_authority')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'pleadings.review_default')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'pleadings.approve_claimant_statement')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'pleadings.read')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'pleadings.prepare')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'pleadings.record_external')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'pleadings.review_default')).toBe(false);
+    expect(hasCapability(user('finance'), 'pleadings.read')).toBe(false);
+    expect(hasCapability(user('readonly'), 'pleadings.read')).toBe(false);
+  });
 });

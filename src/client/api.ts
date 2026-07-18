@@ -1184,6 +1184,64 @@ export interface ProceedingsWorkspace {
   };
 }
 
+export interface PleadingDeadlineRecord {
+  id: string; kind: string; outcome: string; triggerDate: string | null;
+  projectedDate: string | null; ruleKey: string; ruleVersion: string;
+  sourceTitle: string; sourceUrl: string; sourceDocumentVersionId: string | null;
+  reviewedAt: string | null; createdAt: string;
+}
+
+export interface DefaultJudgmentReviewRecord {
+  id: string; outcome: 'review_incomplete' | 'blockers_recorded' | 'human_review_completed';
+  blockers: string[]; claimType: string; requestedMethod: string; note: string;
+  version: number; reviewedBy: string | null; reviewedAt: string | null;
+}
+
+export interface PleadingResponseTrack {
+  id: string; proceedingId: string; claimantPartyId: string; defendantPartyId: string;
+  claimFormDocumentVersionId: string; particularsDocumentVersionId: string | null;
+  regime: string; serviceRecordId: string | null; currentState: string; version: number;
+  createdAt: string; updatedAt: string;
+  claimant: { id: string; name: string; kind: string } | null;
+  defendant: { id: string; name: string; kind: string } | null;
+  events: unknown[]; statements: PleadingStatementRecord[]; deadlines: PleadingDeadlineRecord[];
+  defaultReviews: DefaultJudgmentReviewRecord[];
+}
+
+export interface PleadingsWorkspace {
+  proceedingId: string;
+  actingUserId: string;
+  tracks: PleadingResponseTrack[];
+  sources: {
+    documents: Array<{ id: string; title: string; version: number; originalName: string }>;
+    parties: Array<{ id: string; name: string; kind: string }>;
+  };
+  permissions: {
+    canRead: boolean; canPrepare: boolean; canRecordExternal: boolean;
+    canApproveClaimantStatement: boolean; canReviewDefault: boolean;
+    canRecordAmendmentAuthority: boolean;
+  };
+}
+
+export interface PleadingStatementRecord {
+  id: string; proceedingId: string; trackId: string | null; statementType: string;
+  partyId: string; version: number;
+  currentVersion: null | {
+    id: string; versionNumber: number; statementType: string; documentVersionId: string;
+    predecessorVersionId: string | null; statementOfTruthStatus: string;
+    signatoryName: string; signatoryCapacity: string; signedAt: string | null;
+    responsePosition: string; amendmentRoute: string; amendmentReason: string;
+    preparedByUserId: string; createdAt: string;
+  };
+  events: unknown[];
+  amendmentAuthorities: Array<{
+    id: string; statementVersionId: string; route: string;
+    consentDocumentVersionId: string | null; applicationId: string | null;
+    sealedOrderId: string | null; reviewedBy: string; reviewedAt: string; note: string;
+  }>;
+  projection: { filingState: string; serviceState: string };
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'

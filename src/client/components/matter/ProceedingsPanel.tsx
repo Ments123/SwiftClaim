@@ -13,6 +13,7 @@ const ApplicationDialog = lazy(() => import('./ProceedingsDialogs.js').then((mod
 const OrderDialog = lazy(() => import('./ProceedingsDialogs.js').then((module) => ({ default: module.OrderDialog })));
 const HearingDialog = lazy(() => import('./ProceedingsDialogs.js').then((module) => ({ default: module.HearingDialog })));
 const ProceedingsEventDialog = lazy(() => import('./ProceedingsDialogs.js').then((module) => ({ default: module.ProceedingsEventDialog })));
+const PleadingsResponsesPanel = lazy(() => import('./PleadingsResponsesPanel.js').then((module) => ({ default: module.PleadingsResponsesPanel })));
 
 interface ProceedingsPanelProps {
   matterId: string;
@@ -20,7 +21,7 @@ interface ProceedingsPanelProps {
   onRefresh: () => Promise<void> | void;
 }
 
-type View = 'case' | 'filings' | 'directions' | 'applications' | 'hearings';
+type View = 'case' | 'pleadings' | 'filings' | 'directions' | 'applications' | 'hearings';
 type Command = 'authority' | 'filing' | 'service' | 'direction' | 'application' | 'order' | 'hearing' | null;
 
 function label(value: string): string {
@@ -69,13 +70,16 @@ export function ProceedingsPanel({ matterId, workspace, onRefresh }: Proceedings
       </div>
 
       <nav className="workspace-tabs" aria-label="Proceedings views">
-        {([['case', 'Case'], ['filings', 'Filings & service'], ['directions', 'Directions'],
+        {([['case', 'Case'], ['pleadings', 'Pleadings & responses'], ['filings', 'Filings & service'], ['directions', 'Directions'],
           ['applications', 'Applications'], ['hearings', 'Hearings & orders']] as const)
           .map(([id, text]) => <button key={id} type="button" className={view === id ? 'is-active' : ''}
             aria-current={view === id ? 'page' : undefined} onClick={() => setView(id)}>{text}</button>)}
       </nav>
 
       <div className="proceedings-content">
+        {view === 'pleadings' ? proceeding ? <Suspense fallback={<div className="pleadings-state">Loading pleading response records…</div>}>
+          <PleadingsResponsesPanel matterId={matterId} proceedingId={proceeding.id} />
+        </Suspense> : <Empty title="No proceeding workspace" text="Create the governed court record before opening response tracks." /> : null}
         {view === 'case' ? proceeding ? <div className="proceedings-view">
           <header><div><span className="eyebrow">{proceeding.proceedingReference}</span><h3>{proceeding.caseNumber ?? 'Case number pending'}</h3></div><div className="button-row">{workspace.permissions?.canApproveIssue ? <button className="button button--secondary button--small" type="button" onClick={() => setCommand('authority')}>Record issue authority</button> : null}{workspace.permissions?.canRecordExternal ? <button className="button button--secondary button--small" type="button" onClick={() => setEventTarget({ kind: 'case', id: proceeding.id, version: proceeding.version, label: proceeding.proceedingReference })}>Record court event</button> : null}
             <span className={`governance-state governance-state--${proceeding.currentState}`}>

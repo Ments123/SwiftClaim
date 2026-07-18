@@ -37,6 +37,9 @@ import { IntakeService } from './intake/service.js';
 import { IntakeStore } from './intake/store.js';
 import { DatabaseNegotiationReadiness } from './negotiation/readiness.js';
 import { DatabaseProceedingsReadiness } from './proceedings/readiness.js';
+import { pleadingsRoutes } from './pleadings/routes.js';
+import { PleadingsService } from './pleadings/service.js';
+import { PleadingsStore } from './pleadings/store.js';
 import { proceedingsRoutes } from './proceedings/routes.js';
 import { ProceedingsService } from './proceedings/service.js';
 import { ProceedingsStore } from './proceedings/store.js';
@@ -191,6 +194,7 @@ export async function buildApp(
   const negotiationReadiness = new DatabaseNegotiationReadiness(database, now);
   const proceedingsReadiness = new DatabaseProceedingsReadiness(database, now);
   const proceedingsService = new ProceedingsService(new ProceedingsStore(database, now), now);
+  const pleadingsService = new PleadingsService(new PleadingsStore(database, now));
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -628,6 +632,15 @@ export async function buildApp(
 
   await app.register(proceedingsRoutes, {
     service: proceedingsService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(pleadingsRoutes, {
+    service: pleadingsService,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,

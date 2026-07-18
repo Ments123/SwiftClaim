@@ -42,6 +42,11 @@ describe('ProceedingsPanel', () => {
     expect(screen.getByText(/1 overdue direction/i)).toBeTruthy();
   });
 
+  it('offers a dedicated pleadings and responses view for issued proceedings', () => {
+    render(<ProceedingsPanel matterId="matter-1" workspace={workspace} onRefresh={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Pleadings & responses' })).toBeTruthy();
+  });
+
   it('gates commands with server permissions and offers exact retained sources', async () => {
     const governed: ProceedingsWorkspace = {
       ...workspace,
