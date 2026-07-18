@@ -62,6 +62,14 @@ export type Capability =
   | 'pleadings.approve_claimant_statement'
   | 'pleadings.review_default'
   | 'pleadings.record_amendment_authority'
+  | 'disclosure.read'
+  | 'disclosure.prepare'
+  | 'disclosure.review'
+  | 'disclosure.review_privilege'
+  | 'disclosure.waive_privilege'
+  | 'disclosure.approve_redaction'
+  | 'disclosure.generate_list'
+  | 'disclosure.record_external'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -118,6 +126,10 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'pleadings.approve_claimant_statement',
     'pleadings.review_default',
     'pleadings.record_amendment_authority',
+    'disclosure.read', 'disclosure.prepare', 'disclosure.review',
+    'disclosure.review_privilege', 'disclosure.waive_privilege',
+    'disclosure.approve_redaction', 'disclosure.generate_list',
+    'disclosure.record_external',
     'administration.view',
   ],
   partner: [
@@ -173,6 +185,10 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'pleadings.approve_claimant_statement',
     'pleadings.review_default',
     'pleadings.record_amendment_authority',
+    'disclosure.read', 'disclosure.prepare', 'disclosure.review',
+    'disclosure.review_privilege', 'disclosure.waive_privilege',
+    'disclosure.approve_redaction', 'disclosure.generate_list',
+    'disclosure.record_external',
     'administration.view',
   ],
   solicitor: [
@@ -218,6 +234,9 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'pleadings.approve_claimant_statement',
     'pleadings.review_default',
     'pleadings.record_amendment_authority',
+    'disclosure.read', 'disclosure.prepare', 'disclosure.review',
+    'disclosure.review_privilege', 'disclosure.approve_redaction',
+    'disclosure.generate_list', 'disclosure.record_external',
   ],
   paralegal: [
     'matter.read',
@@ -242,6 +261,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'pleadings.read',
     'pleadings.prepare',
     'pleadings.record_external',
+    'disclosure.read', 'disclosure.prepare', 'disclosure.record_external',
   ],
   finance: ['matter.read'],
   readonly: ['matter.read', 'communications.read'],

@@ -4,6 +4,8 @@ import { EvaluationCommunicationProvider } from './communications/evaluation-pro
 import { CommunicationProviderRegistry } from './communications/provider.js';
 import { CommunicationService } from './communications/service.js';
 import { CommunicationStore } from './communications/store.js';
+import { DisclosureService } from './disclosure/service.js';
+import { DisclosureStore } from './disclosure/store.js';
 import { migrations, runMigrations } from './migrations/index.js';
 import { NegotiationService } from './negotiation/service.js';
 import { NegotiationStore } from './negotiation/store.js';
@@ -2785,5 +2787,86 @@ export function seedPleadingsEvaluation(database: DatabaseSync): void {
     outcome: 'blockers_recorded', reviewedAt: fixedNow,
     blockers: ['Part 12 exclusion question unresolved'],
     note: 'Human review remains blocked by an unresolved Part 12 question.',
+  }, audit);
+}
+
+export function seedDisclosureEvaluation(database: DatabaseSync): void {
+  const fixedNow = '2026-10-01T10:00:00.000Z';
+  const now = () => new Date(fixedNow);
+  const ava: SessionUser = { id: SEED_IDS.ava, firmId: SEED_IDS.northstarFirm,
+    firmName: 'Northstar Legal', email: 'ava@northstar.test', name: 'Ava Morgan', role: 'solicitor' };
+  const matterId = SEED_IDS.northstarMatter;
+  const proceeding = database.prepare(`SELECT id FROM court_proceedings WHERE firm_id = ? AND matter_id = ? ORDER BY created_at LIMIT 1`)
+    .get(ava.firmId, matterId) as { id: string } | undefined;
+  const documents = database.prepare(`SELECT dv.id FROM document_versions dv JOIN documents d
+    ON d.id = dv.document_id AND d.firm_id = dv.firm_id WHERE dv.firm_id = ? AND d.matter_id = ?
+    ORDER BY dv.created_at, dv.id LIMIT 4`).all(ava.firmId, matterId) as Array<{ id: string }>;
+  if (!proceeding || documents.length < 4) return;
+  const service = new DisclosureService(new DisclosureStore(database, now));
+  const audit = { requestId: 'seed-governed-disclosure', ipAddress: '127.0.0.1' };
+  const review = service.openReview(ava, matterId, proceeding.id, {
+    idempotencyKey: 'seed-disclosure-review', disclosingPartyId: SEED_IDS.northstarClient,
+    directionId: null, scopeNote: 'Ava recorded the synthetic disclosure scope for repair, notice and inspection issues.',
+    dateFrom: null, dateTo: null, custodians: ['Maya Clarke'], issueTags: ['repairs', 'notice', 'inspection'],
+  }, audit);
+  const approved = service.addCandidate(ava, matterId, proceeding.id, review.id, {
+    expectedVersion: 1, idempotencyKey: 'seed-disclosure-approved-candidate', documentVersionId: documents[0]!.id,
+    evidenceItemId: null, custodian: 'Maya Clarke', sourceNote: 'Synthetic repair chronology retained for human disclosure review.',
+  }, audit);
+  service.recordAiSuggestion(ava, matterId, proceeding.id, approved.id, {
+    idempotencyKey: 'seed-disclosure-approved-ai', relevance: 'likely_relevant', privilegeWarning: 'none',
+    rationale: 'Repair terms were detected; human disclosure review remained required.', model: 'evaluation-local-v1',
+    policyVersion: 'disclosure-evaluation-v1', sourceHash: 'a'.repeat(64), citedSpans: ['repair'], suggestedIssueTags: ['repairs'],
+  }, audit);
+  service.approveRedaction(ava, matterId, proceeding.id, approved.id, {
+    expectedVersion: 1, idempotencyKey: 'seed-disclosure-redaction', redactedDocumentVersionId: documents[3]!.id,
+    categories: ['personal_data'], reason: 'Ava visually checked the synthetic redacted version against the exact original.',
+    visualReviewConfirmed: true, reviewedAt: fixedNow,
+  }, audit);
+  service.recordPrivilegeReview(ava, matterId, proceeding.id, approved.id, {
+    expectedVersion: 2, idempotencyKey: 'seed-disclosure-approved-privilege', category: 'none', outcome: 'not_privileged',
+    basis: 'Ava reviewed the exact synthetic source and found no privileged communication.', authorityDocumentVersionId: null,
+    confirmExposure: false, reviewedAt: fixedNow,
+  }, audit);
+  service.recordDecision(ava, matterId, proceeding.id, approved.id, {
+    expectedVersion: 3, idempotencyKey: 'seed-disclosure-approved-decision', decision: 'disclose',
+    reason: 'Ava reviewed the exact version and approved disclosure using the checked redaction.', redactionRequired: true,
+    reviewedAt: fixedNow,
+  }, audit);
+  const restricted = service.addCandidate(ava, matterId, proceeding.id, review.id, {
+    expectedVersion: 2, idempotencyKey: 'seed-disclosure-restricted-candidate', documentVersionId: documents[1]!.id,
+    evidenceItemId: null, custodian: 'Ava Morgan', sourceNote: 'Synthetic solicitor note retained in the restricted disclosure queue.',
+  }, audit);
+  service.recordAiSuggestion(ava, matterId, proceeding.id, restricted.id, {
+    idempotencyKey: 'seed-disclosure-restricted-ai', relevance: 'likely_relevant', privilegeWarning: 'possible',
+    rationale: 'Possible legal advice language was detected; human privilege review is required.', model: 'evaluation-local-v1',
+    policyVersion: 'disclosure-evaluation-v1', sourceHash: 'b'.repeat(64), citedSpans: ['legal advice'], suggestedIssueTags: [],
+  }, audit);
+  service.recordPrivilegeReview(ava, matterId, proceeding.id, restricted.id, {
+    expectedVersion: 1, idempotencyKey: 'seed-disclosure-restricted-review', category: 'legal_advice', outcome: 'restricted',
+    basis: 'Ava identified synthetic legal advice and retained the document in the restricted queue.',
+    authorityDocumentVersionId: null, confirmExposure: false, reviewedAt: fixedNow,
+  }, audit);
+  const uncertain = service.addCandidate(ava, matterId, proceeding.id, review.id, {
+    expectedVersion: 3, idempotencyKey: 'seed-disclosure-uncertain-candidate', documentVersionId: documents[2]!.id,
+    evidenceItemId: null, custodian: 'Maya Clarke', sourceNote: 'Synthetic source retained with an unresolved relevance suggestion.',
+  }, audit);
+  service.recordAiSuggestion(ava, matterId, proceeding.id, uncertain.id, {
+    idempotencyKey: 'seed-disclosure-uncertain-ai', relevance: 'uncertain', privilegeWarning: 'none',
+    rationale: 'No deterministic issue match was found; human disclosure review remains required.', model: 'evaluation-local-v1',
+    policyVersion: 'disclosure-evaluation-v1', sourceHash: 'c'.repeat(64), citedSpans: [], suggestedIssueTags: [],
+  }, audit);
+  const list = service.generateList(ava, matterId, proceeding.id, review.id, {
+    expectedVersion: 4, idempotencyKey: 'seed-disclosure-list', title: 'Synthetic claimant disclosure list',
+    generatedAt: fixedNow, note: 'Immutable synthetic list snapshot generated from current human decisions.',
+  }, audit);
+  const request = service.createInspectionRequest(ava, matterId, proceeding.id, review.id, {
+    idempotencyKey: 'seed-disclosure-inspection', disclosureListId: list.id, requestingPartyId: SEED_IDS.northstarOpponent,
+    entryIds: [list.entries[0]!.id], receivedAt: fixedNow, note: 'Synthetic inspection request received for the listed exact document.',
+  }, audit);
+  service.recordInspectionEvent(ava, matterId, proceeding.id, request.id, {
+    expectedVersion: 1, idempotencyKey: 'seed-disclosure-inspection-provided', eventType: 'provided',
+    occurredAt: fixedNow, providedDocumentVersionId: list.entries[0]!.documentVersionId,
+    deliveryEvidenceDocumentVersionId: null, note: 'The exact synthetic inspection version was provided; completion remains unrecorded.',
   }, audit);
 }

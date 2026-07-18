@@ -31,6 +31,9 @@ import { CommunicationStore } from './communications/store.js';
 import { EvidenceService } from './evidence/service.js';
 import { evidenceRoutes } from './evidence/routes.js';
 import { EvidenceStore } from './evidence/store.js';
+import { disclosureRoutes } from './disclosure/routes.js';
+import { DisclosureService } from './disclosure/service.js';
+import { DisclosureStore } from './disclosure/store.js';
 import { IntakeConflictService } from './intake/conflicts.js';
 import { intakeRoutes } from './intake/routes.js';
 import { IntakeService } from './intake/service.js';
@@ -195,6 +198,7 @@ export async function buildApp(
   const proceedingsReadiness = new DatabaseProceedingsReadiness(database, now);
   const proceedingsService = new ProceedingsService(new ProceedingsStore(database, now), now);
   const pleadingsService = new PleadingsService(new PleadingsStore(database, now));
+  const disclosureService = new DisclosureService(new DisclosureStore(database, now));
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -646,6 +650,12 @@ export async function buildApp(
       requestId: request.id,
       ipAddress: request.ip,
     }),
+  });
+
+  await app.register(disclosureRoutes, {
+    service: disclosureService,
+    requireUser,
+    auditContext: (request) => ({ requestId: request.id, ipAddress: request.ip }),
   });
 
   await app.register(negotiationRoutes, {

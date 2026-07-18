@@ -198,6 +198,11 @@ describe('canonical database', () => {
         name: 'governed pleadings and response control',
         checksumLength: 64,
       },
+      {
+        version: 11,
+        name: 'governed disclosure and evidence',
+        checksumLength: 64,
+      },
     ]);
   });
 

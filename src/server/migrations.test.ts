@@ -23,10 +23,25 @@ describe('runMigrations', () => {
       { version: 8, name: 'negotiation and settlement authority' },
       { version: 9, name: 'governed proceedings' },
       { version: 10, name: 'governed pleadings and response control' },
+      { version: 11, name: 'governed disclosure and evidence' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates tenant-safe immutable disclosure records', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-18T18:00:00.000Z');
+    const names = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all().map((row) => String((row as { name: unknown }).name));
+    expect(names).toEqual(expect.arrayContaining([
+      'disclosure_reviews', 'disclosure_review_events', 'disclosure_documents',
+      'disclosure_ai_suggestions', 'disclosure_decisions', 'disclosure_privilege_reviews',
+      'disclosure_redactions', 'disclosure_lists', 'disclosure_list_entries',
+      'inspection_requests', 'inspection_request_items', 'inspection_events',
+      'disclosure_command_receipts',
+    ]));
   });
 
   it('creates immutable tenant-safe pleading response records', () => {
