@@ -193,6 +193,11 @@ describe('canonical database', () => {
         name: 'governed proceedings',
         checksumLength: 64,
       },
+      {
+        version: 10,
+        name: 'governed pleadings and response control',
+        checksumLength: 64,
+      },
     ]);
   });
 

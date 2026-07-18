@@ -17,6 +17,8 @@ import { QuantumService } from './quantum/service.js';
 import { QuantumStore } from './quantum/store.js';
 import { ProceedingsService } from './proceedings/service.js';
 import { ProceedingsStore } from './proceedings/store.js';
+import { PleadingsService } from './pleadings/service.js';
+import { PleadingsStore } from './pleadings/store.js';
 import { hashPassword } from './security.js';
 import { MatterStore } from './store.js';
 import { seedWorkflowDefinitions } from './workflow/definitions.js';
@@ -2711,5 +2713,77 @@ export function seedProceedingsEvaluation(database: DatabaseSync): void {
     venue: 'Courtroom 3', attendanceMode: 'in_person', remoteAccessDetails: '',
     privacyPosition: 'public', judgeName: '', advocateNames: ['A. Advocate'],
     attendeeNames: ['Maya Clarke'], bundleDocumentVersionId: null,
+  }, audit);
+}
+
+export function seedPleadingsEvaluation(database: DatabaseSync): void {
+  const fixedNow = '2026-09-15T10:00:00.000Z';
+  const now = () => new Date(fixedNow);
+  const ava: SessionUser = {
+    id: SEED_IDS.ava, firmId: SEED_IDS.northstarFirm, firmName: 'Northstar Legal',
+    email: 'ava@northstar.test', name: 'Ava Morgan', role: 'solicitor',
+  };
+  const matterId = SEED_IDS.northstarMatter;
+  const proceeding = database.prepare(`SELECT id FROM court_proceedings
+    WHERE firm_id = ? AND matter_id = ? ORDER BY created_at LIMIT 1`)
+    .get(ava.firmId, matterId) as { id: string } | undefined;
+  if (!proceeding) return;
+  const documents = database.prepare(`SELECT dv.id FROM document_versions dv
+    JOIN documents d ON d.id = dv.document_id AND d.firm_id = dv.firm_id
+    WHERE dv.firm_id = ? AND d.matter_id = ? ORDER BY dv.created_at, dv.id LIMIT 2`)
+    .all(ava.firmId, matterId) as Array<{ id: string }>;
+  const serviceRecord = database.prepare(`SELECT id FROM court_service_records
+    WHERE firm_id = ? AND matter_id = ? AND proceeding_id = ? ORDER BY created_at LIMIT 1`)
+    .get(ava.firmId, matterId, proceeding.id) as { id: string } | undefined;
+  if (documents.length < 2 || !serviceRecord) return;
+
+  const service = new PleadingsService(new PleadingsStore(database, now));
+  const track = service.openTrack(ava, matterId, proceeding.id, {
+    idempotencyKey: 'seed-pleadings-track', claimantPartyId: SEED_IDS.northstarClient,
+    defendantPartyId: SEED_IDS.northstarOpponent,
+    claimFormDocumentVersionId: documents[0]!.id,
+    particularsDocumentVersionId: documents[1]!.id,
+    regime: 'part_7_domestic', serviceRecordId: serviceRecord.id,
+    note: 'Ava selected the domestic Part 7 regime from reviewed synthetic service facts.',
+  }, { requestId: 'seed-governed-pleadings', ipAddress: '127.0.0.1' });
+
+  const audit = { requestId: 'seed-governed-pleadings', ipAddress: '127.0.0.1' };
+  const statement = service.createStatementVersion(ava, matterId, proceeding.id, track.id, {
+    idempotencyKey: 'seed-pleadings-defence', statementType: 'defence',
+    partyId: SEED_IDS.northstarOpponent, documentVersionId: documents[1]!.id,
+    predecessorVersionId: null, preparedByUserId: ava.id,
+    statementOfTruthStatus: 'signed', signatoryName: 'Synthetic Defendant',
+    signatoryCapacity: 'Defendant', signedAt: '2026-09-15T09:00:00.000Z',
+    responsePosition: 'counterclaim_included', amendmentRoute: 'written_consent',
+    amendmentReason: 'Synthetic chronology amendment retained for evaluation.',
+  }, audit);
+  service.recordAmendmentAuthority(
+    ava, matterId, proceeding.id, statement.currentVersion!.id, {
+      expectedVersion: statement.version, idempotencyKey: 'seed-pleadings-amendment-authority',
+      route: 'written_consent', consentDocumentVersionId: documents[0]!.id,
+      applicationId: null, sealedOrderId: null, reviewedAt: fixedNow,
+      note: 'Ava retained and reviewed the exact synthetic written consent source.',
+    }, audit,
+  );
+  const deadline = service.reviewDeadline(ava, matterId, proceeding.id, track.id, {
+    expectedVersion: track.version, idempotencyKey: 'seed-pleadings-deadline', kind: 'defence',
+    outcome: 'projected', triggerDate: '2026-09-14', projectedDate: '2026-10-12',
+    sourceDocumentVersionId: null, ruleKey: 'cpr_15_4_aos_general',
+    ruleVersion: 'reviewed-2026-07-18', sourceTitle: 'CPR Part 15',
+    sourceUrl: 'https://www.justice.gov.uk/courts/procedure-rules/civil/rules/part15',
+    reviewedAt: fixedNow,
+    note: 'Ava reviewed the synthetic service trigger and qualified defence projection.',
+  }, audit);
+  const review = service.createDefaultReview(ava, matterId, proceeding.id, track.id, {
+    idempotencyKey: 'seed-pleadings-default-review', statementVersionId: statement.currentVersion!.id,
+    deadlineProjectionId: String(deadline.id), claimType: 'Part 7 money and remedy claim',
+    requestedMethod: 'Court review required',
+    note: 'Ava opened the source-backed synthetic default judgment checklist.',
+  }, audit);
+  service.completeDefaultReview(ava, matterId, proceeding.id, review.id, {
+    expectedVersion: review.version, idempotencyKey: 'seed-pleadings-default-blockers',
+    outcome: 'blockers_recorded', reviewedAt: fixedNow,
+    blockers: ['Part 12 exclusion question unresolved'],
+    note: 'Human review remains blocked by an unresolved Part 12 question.',
   }, audit);
 }

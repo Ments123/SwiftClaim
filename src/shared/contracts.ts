@@ -2246,6 +2246,156 @@ export const recordCourtHearingEventSchema = z.object({
   explicitHumanConfirmation: z.literal(true),
 }).strict();
 
+const pleadingUuidSchema = z.string().uuid();
+const pleadingNullableUuidSchema = pleadingUuidSchema.nullable();
+const pleadingCommandKeySchema = z.string().trim().min(8).max(200);
+const pleadingDateTimeSchema = z.string().datetime({ offset: true });
+
+export const procedureRegimeSchema = z.enum([
+  'part_7_domestic', 'part_7_service_out', 'part_8',
+  'court_directed', 'manual_review',
+]);
+export const statementTypeSchema = z.enum([
+  'claim_form', 'particulars', 'acknowledgment_of_service', 'defence',
+  'reply', 'counterclaim', 'defence_to_counterclaim',
+  'part_8_acknowledgment', 'amended_statement', 'other',
+]);
+export const statementOfTruthStatusSchema = z.enum([
+  'not_applicable', 'required_unconfirmed', 'present_unsigned', 'signed',
+  'defective_or_disputed', 'not_reviewed',
+]);
+export const responsePositionSchema = z.enum([
+  'defend_all', 'defend_part', 'admit_all', 'admit_part',
+  'jurisdiction_challenged', 'counterclaim_included', 'not_recorded',
+]);
+export const amendmentRouteSchema = z.enum([
+  'before_service', 'written_consent', 'court_permission',
+  'court_direction', 'not_applicable',
+]);
+export const statementEventTypeSchema = z.enum([
+  'prepared', 'approved_for_filing', 'filed', 'provider_acknowledged',
+  'court_accepted', 'served', 'rejected', 'withdrawn', 'corrected',
+  'superseded', 'permission_granted', 'permission_refused',
+]);
+export const deadlineOutcomeSchema = z.enum([
+  'projected', 'source_date', 'manual_court_period_required',
+  'blocked_missing_facts', 'superseded',
+]);
+export const defaultReviewOutcomeSchema = z.enum([
+  'review_incomplete', 'blockers_recorded', 'human_review_completed',
+]);
+
+export const createResponseTrackSchema = z.object({
+  idempotencyKey: pleadingCommandKeySchema,
+  claimantPartyId: pleadingUuidSchema,
+  defendantPartyId: pleadingUuidSchema,
+  claimFormDocumentVersionId: pleadingUuidSchema,
+  particularsDocumentVersionId: pleadingNullableUuidSchema,
+  regime: procedureRegimeSchema,
+  serviceRecordId: pleadingNullableUuidSchema,
+  note: z.string().trim().min(10).max(4_000),
+}).strict();
+
+export const createStatementVersionSchema = z.object({
+  idempotencyKey: pleadingCommandKeySchema,
+  statementType: statementTypeSchema,
+  partyId: pleadingUuidSchema,
+  documentVersionId: pleadingUuidSchema,
+  predecessorVersionId: pleadingNullableUuidSchema,
+  preparedByUserId: pleadingUuidSchema,
+  statementOfTruthStatus: statementOfTruthStatusSchema,
+  signatoryName: z.string().trim().max(300).default(''),
+  signatoryCapacity: z.string().trim().max(300).default(''),
+  signedAt: pleadingDateTimeSchema.nullable(),
+  responsePosition: responsePositionSchema,
+  amendmentRoute: amendmentRouteSchema,
+  amendmentReason: z.string().trim().max(4_000).default(''),
+}).strict().superRefine((input, context) => {
+  if (input.statementOfTruthStatus === 'signed' &&
+      (!input.signatoryName || !input.signatoryCapacity || !input.signedAt)) {
+    context.addIssue({ code: 'custom', path: ['signatoryName'], message: 'Signed statements require signatory name, capacity and signed time.' });
+  }
+});
+
+export const recordStatementEventSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: pleadingCommandKeySchema,
+  eventType: statementEventTypeSchema,
+  occurredAt: pleadingDateTimeSchema,
+  note: z.string().trim().min(10).max(4_000),
+  filingId: pleadingNullableUuidSchema,
+  serviceRecordId: pleadingNullableUuidSchema,
+  sourceDocumentVersionId: pleadingNullableUuidSchema,
+  supersedesEventId: pleadingNullableUuidSchema,
+  correctionReason: z.string().trim().max(2_000).default(''),
+}).strict().superRefine((input, context) => {
+  if (['filed', 'provider_acknowledged', 'court_accepted', 'rejected'].includes(input.eventType) && !input.filingId) {
+    context.addIssue({ code: 'custom', path: ['filingId'], message: 'This event requires an exact filing record.' });
+  }
+  if (input.eventType === 'served' && !input.serviceRecordId) {
+    context.addIssue({ code: 'custom', path: ['serviceRecordId'], message: 'Service requires an exact service record.' });
+  }
+  if (input.eventType === 'corrected' && (!input.supersedesEventId || input.correctionReason.length < 10)) {
+    context.addIssue({ code: 'custom', path: ['correctionReason'], message: 'A correction requires the superseded event and reason.' });
+  }
+});
+
+export const reviewPleadingDeadlineSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: pleadingCommandKeySchema,
+  kind: z.enum(['acknowledgment', 'defence', 'reply', 'counterclaim_response', 'amended_statement_filing', 'amended_statement_service']),
+  outcome: deadlineOutcomeSchema,
+  triggerDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  projectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  sourceDocumentVersionId: pleadingNullableUuidSchema,
+  ruleKey: z.string().trim().max(100).default(''),
+  ruleVersion: z.string().trim().max(100).default(''),
+  sourceTitle: z.string().trim().max(500).default(''),
+  sourceUrl: z.url().or(z.literal('')),
+  reviewedAt: pleadingDateTimeSchema,
+  note: z.string().trim().min(10).max(4_000),
+}).strict().superRefine((input, context) => {
+  if (input.outcome === 'source_date' && (!input.projectedDate || !input.sourceDocumentVersionId)) {
+    context.addIssue({ code: 'custom', path: ['sourceDocumentVersionId'], message: 'A source date requires the exact source and date.' });
+  }
+});
+
+export const recordAmendmentAuthoritySchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: pleadingCommandKeySchema,
+  route: amendmentRouteSchema.exclude(['not_applicable']),
+  consentDocumentVersionId: pleadingNullableUuidSchema,
+  applicationId: pleadingNullableUuidSchema,
+  sealedOrderId: pleadingNullableUuidSchema,
+  reviewedAt: pleadingDateTimeSchema,
+  note: z.string().trim().min(10).max(4_000),
+}).strict().superRefine((input, context) => {
+  if (input.route === 'written_consent' && !input.consentDocumentVersionId) context.addIssue({ code: 'custom', path: ['consentDocumentVersionId'], message: 'Written consent source is required.' });
+  if (input.route === 'court_permission' && (!input.applicationId || !input.sealedOrderId)) context.addIssue({ code: 'custom', path: ['sealedOrderId'], message: 'Court permission requires the application and sealed order.' });
+  if (input.route === 'court_direction' && !input.sealedOrderId) context.addIssue({ code: 'custom', path: ['sealedOrderId'], message: 'Court direction requires a sealed order.' });
+});
+
+export const createDefaultReviewSchema = z.object({
+  idempotencyKey: pleadingCommandKeySchema,
+  statementVersionId: pleadingNullableUuidSchema,
+  deadlineProjectionId: pleadingNullableUuidSchema,
+  claimType: z.string().trim().min(2).max(300),
+  requestedMethod: z.string().trim().min(2).max(300),
+  note: z.string().trim().min(10).max(4_000),
+}).strict();
+
+export const completeDefaultReviewSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: pleadingCommandKeySchema,
+  outcome: defaultReviewOutcomeSchema,
+  reviewedAt: pleadingDateTimeSchema,
+  blockers: z.array(z.string().trim().min(3).max(1_000)).max(30),
+  note: z.string().trim().min(10).max(4_000),
+}).strict().superRefine((input, context) => {
+  if (input.outcome === 'blockers_recorded' && input.blockers.length === 0) context.addIssue({ code: 'custom', path: ['blockers'], message: 'Record at least one blocker.' });
+  if (input.outcome === 'human_review_completed' && input.blockers.length > 0) context.addIssue({ code: 'custom', path: ['blockers'], message: 'Resolve or record blockers before completing review.' });
+});
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -2336,6 +2486,13 @@ export type CreateCourtDirectionInput = z.infer<typeof createCourtDirectionSchem
 export type RecordCourtDirectionEventInput = z.infer<typeof recordCourtDirectionEventSchema>;
 export type CreateCourtHearingInput = z.infer<typeof createCourtHearingSchema>;
 export type RecordCourtHearingEventInput = z.infer<typeof recordCourtHearingEventSchema>;
+export type CreateResponseTrackInput = z.infer<typeof createResponseTrackSchema>;
+export type CreateStatementVersionInput = z.infer<typeof createStatementVersionSchema>;
+export type RecordStatementEventInput = z.infer<typeof recordStatementEventSchema>;
+export type ReviewPleadingDeadlineInput = z.infer<typeof reviewPleadingDeadlineSchema>;
+export type RecordAmendmentAuthorityInput = z.infer<typeof recordAmendmentAuthoritySchema>;
+export type CreateDefaultReviewInput = z.infer<typeof createDefaultReviewSchema>;
+export type CompleteDefaultReviewInput = z.infer<typeof completeDefaultReviewSchema>;
 
 export interface ApiErrorBody {
   error: {

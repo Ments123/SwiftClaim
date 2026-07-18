@@ -4326,6 +4326,44 @@ a {
   .negotiation-card { grid-template-columns: 1fr; }.negotiation-card dl { grid-template-columns: 1fr; }
 }
 
+/* Governed pleadings and response control */
+.pleadings-response-view { display: grid; gap: 16px; }
+.pleadings-response-header { display: flex; justify-content: space-between; gap: 16px; }
+.pleadings-response-header h3 { margin: 3px 0 4px; font-size: 1.05rem; }
+.pleadings-response-header p { margin: 0; color: var(--muted); font-size: .68rem; line-height: 1.5; }
+.pleadings-track-list { display: grid; gap: 11px; }
+.pleadings-track { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.pleadings-track > header { padding: 13px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); background: #fafbfd; }
+.pleadings-track > header span { color: var(--muted); font-size: .56rem; font-weight: 800; text-transform: uppercase; }
+.pleadings-track h4 { margin: 3px 0 0; font-size: .83rem; }
+.pleading-state { padding: 5px 8px; border: 1px solid #b8dec8; border-radius: 999px; color: #237144; background: #f1fbf5; font-size: .58rem; }
+.pleading-track-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.pleading-summary-grid { padding: 13px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pleading-summary-grid > div { min-height: 112px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; display: grid; align-content: start; gap: 4px; color: var(--blue-700); background: #fff; }
+.pleading-summary-grid > div.has-warning { border-color: #efd49e; color: #925c0a; background: #fff9ec; }
+.pleading-summary-grid span { color: var(--muted); font-size: .56rem; font-weight: 800; text-transform: uppercase; }
+.pleading-summary-grid strong { color: var(--ink); font-size: .75rem; }
+.pleading-summary-grid small { color: var(--muted); font-size: .57rem; line-height: 1.4; }
+.pleading-statement-list { margin: 0 13px 13px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.pleading-statement-row { padding: 10px 11px; display: flex; justify-content: space-between; gap: 14px; background: #fff; }
+.pleading-statement-row + .pleading-statement-row { border-top: 1px solid var(--line); }
+.pleading-statement-row > div:first-child { display: grid; gap: 3px; }
+.pleading-statement-row strong { color: var(--ink); font-size: .68rem; }
+.pleading-statement-row small { color: var(--muted); font-size: .57rem; }
+.pleading-statement-facts { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.pleading-statement-facts span { padding: 4px 7px; border-radius: 999px; color: var(--blue-700); background: var(--blue-50); font-size: .54rem; font-weight: 750; }
+.pleadings-track > footer { padding: 9px 14px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .59rem; }
+.pleadings-track > footer a { color: var(--blue-700); font-weight: 800; }
+.pleadings-state { min-height: 190px; display: grid; place-items: center; align-content: center; gap: 6px; color: var(--muted); font-size: .68rem; text-align: center; }
+.pleadings-state strong { color: var(--ink); }.pleadings-state.is-error { color: #a33232; }
+
+@media (max-width: 760px) {
+  .pleading-summary-grid { grid-template-columns: 1fr; }
+  .pleading-statement-row { flex-direction: column; }
+  .pleading-statement-facts { justify-content: flex-start; }
+  .pleadings-track > footer { flex-direction: column; }
+}
+
 /* Governed communications */
 .communications-workspace {
   overflow: hidden;

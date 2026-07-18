@@ -22,10 +22,48 @@ describe('runMigrations', () => {
       { version: 7, name: 'governed communications' },
       { version: 8, name: 'negotiation and settlement authority' },
       { version: 9, name: 'governed proceedings' },
+      { version: 10, name: 'governed pleadings and response control' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates immutable tenant-safe pleading response records', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-18T14:00:00.000Z');
+
+    const tableNames = (database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(tableNames).toEqual(expect.arrayContaining([
+      'claim_response_tracks',
+      'claim_response_track_events',
+      'statements_of_case',
+      'statement_of_case_versions',
+      'statement_of_case_events',
+      'statement_amendment_authorities',
+      'pleading_deadline_projections',
+      'default_judgment_reviews',
+      'default_judgment_review_items',
+      'default_judgment_review_events',
+      'pleadings_command_receipts',
+    ]));
+
+    const triggerNames = (database
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger'
+        AND (name LIKE 'statement_of_case_%' OR name LIKE 'statement_amendment_%' OR name LIKE 'pleading_%'
+          OR name LIKE 'claim_response_%' OR name LIKE 'default_judgment_%')`)
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'statement_of_case_events_no_delete',
+      'statement_of_case_versions_no_update',
+      'statement_amendment_authorities_no_update',
+      'pleading_deadline_projections_no_delete',
+      'claim_response_track_events_no_update',
+      'default_judgment_review_items_no_delete',
+      'default_judgment_review_events_no_delete',
+    ]));
   });
 
   it('creates tenant-safe proceedings tables with immutable legal events', () => {

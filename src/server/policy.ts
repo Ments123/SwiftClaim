@@ -56,6 +56,12 @@ export type Capability =
   | 'proceedings.manage_hearings'
   | 'proceedings.record_order'
   | 'proceedings.record_relief'
+  | 'pleadings.read'
+  | 'pleadings.prepare'
+  | 'pleadings.record_external'
+  | 'pleadings.approve_claimant_statement'
+  | 'pleadings.review_default'
+  | 'pleadings.record_amendment_authority'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -106,6 +112,12 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'proceedings.manage_hearings',
     'proceedings.record_order',
     'proceedings.record_relief',
+    'pleadings.read',
+    'pleadings.prepare',
+    'pleadings.record_external',
+    'pleadings.approve_claimant_statement',
+    'pleadings.review_default',
+    'pleadings.record_amendment_authority',
     'administration.view',
   ],
   partner: [
@@ -155,6 +167,12 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'proceedings.manage_hearings',
     'proceedings.record_order',
     'proceedings.record_relief',
+    'pleadings.read',
+    'pleadings.prepare',
+    'pleadings.record_external',
+    'pleadings.approve_claimant_statement',
+    'pleadings.review_default',
+    'pleadings.record_amendment_authority',
     'administration.view',
   ],
   solicitor: [
@@ -194,6 +212,12 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'proceedings.manage_hearings',
     'proceedings.record_order',
     'proceedings.record_relief',
+    'pleadings.read',
+    'pleadings.prepare',
+    'pleadings.record_external',
+    'pleadings.approve_claimant_statement',
+    'pleadings.review_default',
+    'pleadings.record_amendment_authority',
   ],
   paralegal: [
     'matter.read',
@@ -215,6 +239,9 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'proceedings.prepare',
     'proceedings.manage_directions',
     'proceedings.manage_hearings',
+    'pleadings.read',
+    'pleadings.prepare',
+    'pleadings.record_external',
   ],
   finance: ['matter.read'],
   readonly: ['matter.read', 'communications.read'],
