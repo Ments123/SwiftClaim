@@ -76,7 +76,7 @@ const SECTION_ITEMS: ReadonlyArray<{
     icon: Handshake,
     available: true,
   },
-  { id: 'proceedings', label: 'Proceedings', icon: Gavel, available: false },
+  { id: 'proceedings', label: 'Proceedings', icon: Gavel, available: true },
   {
     id: 'tasks_calendar',
     label: 'Tasks & calendar',

@@ -28,6 +28,7 @@ This repository contains a real full-stack application, not a static prototype. 
 - one governed email, WhatsApp, letter, telephone and internal communication ledger with exact document-version attachments;
 - versioned drafts, approval gates, explicit dispatch confirmation, provider-event projection, call identity/recording provenance and reviewable service assertions;
 - human-authored negotiation reviews, immutable client instructions, versioned authority, exact-term approval gates, settlement terms and evidence-backed obligations;
+- governed civil proceedings with independent issue authority, exact filings, per-recipient service, applications, sealed orders, atomic directions and hearings;
 - append-only audit records protected by database triggers;
 - ordered, transactional database migrations;
 - responsive desktop, tablet, and mobile interface;
@@ -153,6 +154,20 @@ The evaluation adapter performs no external network call. Live provider credenti
 
 SwiftClaim records source facts, calculations and human decisions. It does not autonomously decide whether to make, accept, reject or withdraw an offer; determine Part 36 validity or effect; conclude that terms are binding or enforceable; decide whether court approval is required; or waive an obligation. The controls are informed by the current [SRA Code of Conduct](https://www.sra.org.uk/solicitors/standards-regulations/code-conduct-solicitors/), [CPR Part 36](https://www.justice.gov.uk/courts/procedure-rules/civil/rules/part36) and [CPR Part 40](https://www.justice.gov.uk/courts/procedure-rules/civil/rules/part40), but a human solicitor remains responsible for applying the law to the matter.
 
+### Proceedings
+
+- active **Proceedings** Matter 360 workspace with Case, Filings & service, Directions, Applications, and Hearings & orders views;
+- independent partner/admin issue authority covering the exact retained claim form, particulars, defendants and procedure, with expiry and review controls;
+- issue-request submission kept separate from verified court issue, case number and sealed claim-form evidence;
+- exact filing bundles whose portal acknowledgement never means court acceptance;
+- one service record per exact court document and recipient, with the precise act, evidence, asserted dates and CPR source reviewed separately;
+- applications whose granted outcome requires the resulting sealed order, and hearings whose factual outcome never masquerades as an order;
+- atomic directions with responsibility, due dates, sanctions as expressly stated, evidence-backed satisfaction and sealed-order-only relief or waiver;
+- critical next-date, overdue-direction, service-review and unaccepted-performance summaries on desktop and mobile;
+- objective workflow readiness plus tenant-scoped, optimistic, idempotent, audited and append-only commands.
+
+SwiftClaim has no live HMCTS filing integration in this build and makes no autonomous legal conclusion. Filing, service, issue, compliance, relief, disposal and procedural effect must be confirmed by an authorised human from retained sources. The responsible solicitor must verify the current CPR and apply it to the matter.
+
 ## Quick start
 
 Requirements: Node.js 24 or newer and npm 11 or newer.
@@ -190,7 +205,8 @@ Use Ava for both supported evaluation journeys:
 8. Choose **Communications** to inspect Maya's synthetic landlord email, provider-accepted WhatsApp message, identity-confirmed unrecorded call, privileged internal note, outbound letter with an unreviewed service assertion, and protected draft awaiting approval.
 9. Choose **Negotiation & settlement**, then use the explicit protected-view action. Review the human advice, £3,000–£3,500 authority, exact £3,250 counteroffer instruction and separate partner approval. The counteroffer is authorised but has no external act, so SwiftClaim does not label it sent.
 10. Open **Settlement & compliance** to inspect the separately concluded synthetic settlement. Its payment obligation is only `performance asserted`, not satisfied, because client receipt evidence has not been retained.
-11. The longer-running Maya matter is at Repairs and quantum; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
+11. Choose **Proceedings** to inspect the verified issue, accepted filing, human-reviewed service, sealed directions order, expert direction whose performance is asserted but not accepted, and listed case-management conference.
+12. The longer-running Maya matter is at Repairs and quantum; newly converted Leah matters open at Evidence and notice so objective readiness can be tested before progression.
 
 Use Marcus to test partner-only workflow overrides. Use Lewis to see Southbank's separate Amara Jones enquiry and verify that Northstar enquiry and matter UUIDs remain invisible across firms. All names, addresses, organisations and claim details in the seed are synthetic and evaluation-only.
 
@@ -229,6 +245,7 @@ flowchart TD
   Policy --> Quantum["Repairs and quantum service"]
   Policy --> Communications["Communications service"]
   Policy --> Negotiation["Negotiation and settlement service"]
+  Policy --> Proceedings["Governed proceedings service"]
   Intake --> DB[(SQLite adapter)]
   Matter --> DB[(SQLite adapter)]
   Workflow --> DB
@@ -237,6 +254,7 @@ flowchart TD
   Quantum --> DB
   Communications --> DB
   Negotiation --> DB
+  Proceedings --> DB
   Communications --> Provider["Evaluation provider boundary"]
   Protocol --> Files
   Matter --> Files[Private file storage]

@@ -72,6 +72,21 @@ export interface NegotiationReadinessProvider {
   };
 }
 
+export interface ProceedingsReadinessProvider {
+  getProceedingsReadiness(
+    firmId: string,
+    matterId: string,
+    stageKey: 'negotiation' | 'proceedings',
+  ): {
+    controls: Array<{
+      key: 'court_authority_recorded';
+      eligible: boolean;
+      explanation: string;
+    }>;
+    progressionBlockers: WorkflowBlocker[];
+  };
+}
+
 function checklistLabel(key: string): string {
   const sentence = key.replaceAll('_', ' ');
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
@@ -98,6 +113,7 @@ export class WorkflowService {
     private readonly protocolReadiness?: ProtocolReadinessProvider,
     private readonly quantumReadiness?: QuantumReadinessProvider,
     private readonly negotiationReadiness?: NegotiationReadinessProvider,
+    private readonly proceedingsReadiness?: ProceedingsReadinessProvider,
   ) {}
 
   getMatter360(user: SessionUser, matterId: string) {
@@ -151,6 +167,17 @@ export class WorkflowService {
       blockers = [...new Map(
         [...blockers, ...readiness.progressionBlockers].map((blocker) => [blocker.key, blocker]),
       ).values()];
+    }
+    if (this.proceedingsReadiness && currentStage.key === 'proceedings') {
+      const readiness = this.proceedingsReadiness.getProceedingsReadiness(
+        user.firmId, matterId, 'proceedings',
+      );
+      const objective = readiness.controls.filter(({ eligible }) => !eligible)
+        .map((control): WorkflowBlocker => ({
+          key: control.key, label: control.explanation, severity: 'critical',
+        }));
+      blockers = [...new Map([...blockers, ...objective, ...readiness.progressionBlockers]
+        .map((blocker) => [blocker.key, blocker])).values()];
     }
     if (this.quantumReadiness && currentStage.key === 'repairs_quantum') {
       const readiness = this.quantumReadiness.getQuantumReadiness(
@@ -425,6 +452,20 @@ export class WorkflowService {
             severity: 'warning',
           });
         }
+      }
+      objectiveBlockers.push(...readiness.progressionBlockers);
+    }
+    if (this.proceedingsReadiness &&
+      (currentStage.key === 'proceedings' || targetStage.key === 'proceedings')) {
+      const stageKey = currentStage.key === 'proceedings' ? 'proceedings' : 'negotiation';
+      const readiness = this.proceedingsReadiness.getProceedingsReadiness(
+        user.firmId, matterId, stageKey,
+      );
+      for (const control of readiness.controls.filter(({ eligible }) => !eligible)) {
+        supportedSuppliedChecklistKeys.delete(control.key);
+        objectiveBlockers.push({
+          key: control.key, label: control.explanation, severity: 'critical',
+        });
       }
       objectiveBlockers.push(...readiness.progressionBlockers);
     }

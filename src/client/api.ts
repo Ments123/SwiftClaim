@@ -1116,6 +1116,67 @@ export interface NegotiationWorkspace {
   currentAuthority: SettlementAuthorityRecord | null;
 }
 
+export interface CourtProceedingRecord {
+  id: string; proceedingReference: string; procedureType: string; jurisdiction: string;
+  courtName: string; caseNumber: string | null; track: string | null;
+  currentState: string; issuedAt: string | null; disposalPosition: string; version: number;
+}
+
+export interface ProceedingAuthorityRecord {
+  id: string; version: number; reviewOn: string | null;
+}
+
+export interface CourtFilingRecord {
+  id: string; filingReference: string; purpose: string; currentState: string;
+  version: number; documentVersionIds: string[]; events: unknown[];
+}
+
+export interface CourtServiceRecord {
+  id: string; serviceReference: string; method: string; recipientPartyId: string;
+  currentState: string; version: number; events: unknown[];
+}
+
+export interface CourtApplicationRecord {
+  id: string; applicationReference: string; requestedOrder: string; noticePosition: string;
+  currentState: string; version: number; events: unknown[];
+}
+
+export interface CourtOrderRecord {
+  id: string; orderReference: string; orderType: string; title: string;
+  orderDate: string; takesEffectAt: string; servicePosition: string;
+}
+
+export interface CourtDirectionRecord {
+  id: string; directionReference: string; category: string; requirementText: string;
+  dueAt: string | null; currentState: string; version: number;
+  projection: { state: string; overdue: boolean; dueSoon: boolean }; events: unknown[];
+}
+
+export interface CourtHearingRecord {
+  id: string; hearingReference: string; hearingType: string; title: string;
+  startsAt: string; courtName: string; attendanceMode: string; currentState: string;
+  version: number; projection: { state: string; outcomeRecorded: boolean };
+  resultingOrderId: string | null; events: unknown[];
+}
+
+export interface ProceedingsWorkspace {
+  proceeding: CourtProceedingRecord | null;
+  authority: ProceedingAuthorityRecord | null;
+  events: unknown[];
+  filings: CourtFilingRecord[];
+  services: CourtServiceRecord[];
+  applications: CourtApplicationRecord[];
+  orders: CourtOrderRecord[];
+  directions: CourtDirectionRecord[];
+  hearings: CourtHearingRecord[];
+  risks: Array<{ key?: string; severity?: string; title?: string; detail?: string }>;
+  permissions?: {
+    canRead: boolean; canPrepare: boolean; canApproveIssue: boolean;
+    canRecordExternal: boolean; canManageDirections: boolean;
+    canManageHearings: boolean; canRecordOrder: boolean;
+  };
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'

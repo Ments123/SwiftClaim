@@ -4261,6 +4261,43 @@ a {
 .negotiation-metrics { padding: 0 22px 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .negotiation-metrics > div { padding: 10px; border: 1px solid var(--line); border-radius: 9px; display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 5px; color: var(--blue-700); background: #f8fafc; }
 .negotiation-metrics span { color: var(--muted); font-size: .59rem; font-weight: 750; }.negotiation-metrics strong { color: var(--ink); font-size: .85rem; }
+
+.proceedings-workspace { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-sm); }
+.proceedings-header { padding: 22px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); }
+.proceedings-header h2, .proceedings-header p, .proceedings-critical h3, .proceedings-view h3, .proceedings-record h4, .proceedings-empty h4 { margin: 0; }
+.proceedings-header p { margin-top: 5px; color: var(--muted); max-width: 680px; }
+.proceedings-critical { padding: 16px 22px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; background: #f8fafc; }
+.proceedings-critical article { min-width: 0; padding: 13px; display: flex; gap: 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--blue-700); }
+.proceedings-critical article.is-critical { border-color: #f3b6af; background: #fff8f7; color: #b42318; }
+.proceedings-critical article div { min-width: 0; display: grid; gap: 3px; }
+.proceedings-critical h3 { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; }
+.proceedings-critical strong { color: var(--ink); font-size: .88rem; }
+.proceedings-critical span { color: var(--muted); font-size: .7rem; line-height: 1.35; }
+.proceedings-content { padding: 22px; }
+.proceedings-view { display: grid; gap: 12px; }
+.proceedings-view > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.proceedings-details { margin: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.proceedings-details div { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #f8fafc; }
+.proceedings-details dt { color: var(--muted); font-size: .68rem; font-weight: 750; }
+.proceedings-details dd { margin: 4px 0 0; color: var(--ink); font-size: .82rem; font-weight: 650; }
+.proceedings-record { padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; gap: 15px; border: 1px solid var(--line); border-radius: 10px; }
+.proceedings-record.is-critical { border-left: 4px solid #d92d20; background: #fff8f7; }
+.proceedings-record span { color: var(--muted); font-size: .7rem; }
+.proceedings-record h4 { margin-top: 3px; font-size: .86rem; }
+.proceedings-record strong { max-width: 280px; color: var(--blue-700); font-size: .72rem; text-align: right; }
+.proceedings-empty { padding: 35px; display: grid; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }
+.proceedings-empty p { margin: 0; max-width: 520px; font-size: .8rem; }
+
+@media (max-width: 760px) {
+  .proceedings-header { padding: 16px; flex-direction: column; }
+  .proceedings-critical { padding: 14px; grid-template-columns: 1fr; }
+  .proceedings-content { padding: 14px; }
+  .proceedings-workspace .workspace-tabs { overflow-x: auto; justify-content: flex-start; }
+  .proceedings-workspace .workspace-tabs button { flex: 0 0 auto; white-space: nowrap; }
+  .proceedings-details { grid-template-columns: 1fr; }
+  .proceedings-record { align-items: flex-start; flex-direction: column; }
+  .proceedings-record strong { max-width: none; text-align: left; }
+}
 .negotiation-content { padding: 20px; border-top: 1px solid var(--line); }
 .negotiation-view > header { margin-bottom: 13px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }.negotiation-view h3 { margin: 3px 0; font-size: 1rem; }
 .negotiation-card-list { display: grid; gap: 9px; }
