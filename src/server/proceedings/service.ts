@@ -78,6 +78,7 @@ export class ProceedingsService {
         canManageDirections: hasCapability(user, 'proceedings.manage_directions'),
         canManageHearings: hasCapability(user, 'proceedings.manage_hearings'),
         canRecordOrder: hasCapability(user, 'proceedings.record_order'),
+        canRecordRelief: hasCapability(user, 'proceedings.record_relief'),
       },
     };
   }

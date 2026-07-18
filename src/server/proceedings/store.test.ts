@@ -31,6 +31,10 @@ const lewis: SessionUser = {
   id: SEED_IDS.southbankUser, firmId: SEED_IDS.southbankFirm, firmName: 'Southbank Law',
   email: 'lewis@southbank.test', name: 'Lewis Grant', role: 'solicitor',
 };
+const ben: SessionUser = {
+  id: SEED_IDS.ben, firmId: SEED_IDS.northstarFirm, firmName: 'Northstar Legal',
+  email: 'ben@northstar.test', name: 'Ben Foster', role: 'paralegal',
+};
 const input: CreateProceedingInput = {
   idempotencyKey: 'create-proceeding-001',
   procedureType: 'part7', jurisdiction: 'england_wales',
@@ -80,6 +84,14 @@ describe('ProceedingsStore', () => {
     const created = store.createProceeding(ava, SEED_IDS.northstarMatter, input, audit);
     expect(store.getProceeding(lewis.firmId, SEED_IDS.northstarMatter, created.id)).toBeUndefined();
     expect(store.getWorkspace(lewis, SEED_IDS.northstarMatter)).toBeUndefined();
+  });
+
+  it('does not expose protected client instructions as command sources without permission', () => {
+    store.createProceeding(ava, SEED_IDS.northstarMatter, input, audit);
+    expect(store.getWorkspace(ava, SEED_IDS.northstarMatter)?.sources.clientInstructions.length)
+      .toBeGreaterThan(0);
+    expect(store.getWorkspace(ben, SEED_IDS.northstarMatter)?.sources.clientInstructions)
+      .toEqual([]);
   });
 
   it('persists exact issue authority and a separately verified issued event', () => {

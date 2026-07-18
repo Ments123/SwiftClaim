@@ -655,6 +655,31 @@ export class ProceedingsStore {
         .map(mapHearingEvent);
       return mapHearing(hearing, events);
     });
+    const sourceDocuments = (this.database.prepare(`SELECT dv.id, d.title,
+      dv.version, dv.original_name AS originalName
+      FROM document_versions dv JOIN documents d
+      ON d.id = dv.document_id AND d.firm_id = dv.firm_id
+      WHERE dv.firm_id = ? AND d.matter_id = ?
+      ORDER BY d.title, dv.version DESC`).all(user.firmId, matterId) as Row[])
+      .map((row) => ({ id: String(row.id), title: String(row.title),
+        version: Number(row.version), originalName: String(row.originalName) }));
+    const sourceParties = (this.database.prepare(`SELECT id, name, kind
+      FROM parties WHERE firm_id = ? AND matter_id = ? ORDER BY name, id`)
+      .all(user.firmId, matterId) as Row[]).map((row) => ({
+      id: String(row.id), name: String(row.name), kind: String(row.kind),
+    }));
+    const sourceUsers = (this.database.prepare(`SELECT id, name, role FROM users
+      WHERE firm_id = ? AND active = 1 ORDER BY name, id`).all(user.firmId) as Row[])
+      .map((row) => ({ id: String(row.id), name: String(row.name), role: String(row.role) }));
+    const sourceInstructions = (this.database.prepare(`SELECT id, instruction_type AS instructionType,
+      instructing_person AS instructingPerson, received_at AS receivedAt
+      FROM client_instructions WHERE firm_id = ? AND matter_id = ?
+      AND (confidentiality = 'ordinary' OR ? = 1)
+      ORDER BY received_at DESC, created_at DESC`).all(
+        user.firmId, matterId, hasCapability(user, 'negotiation.read_protected') ? 1 : 0,
+      ) as Row[])
+      .map((row) => ({ id: String(row.id), instructionType: String(row.instructionType),
+        instructingPerson: String(row.instructingPerson), receivedAt: String(row.receivedAt) }));
     return {
       proceeding,
       authority: authorityRow ? mapAuthority(authorityRow) : null,
@@ -666,6 +691,10 @@ export class ProceedingsStore {
       directions,
       hearings,
       risks: [],
+      sources: {
+        documents: sourceDocuments, parties: sourceParties,
+        users: sourceUsers, clientInstructions: sourceInstructions,
+      },
     };
   }
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js 24, TypeScript 7, Fastify 5, SQLite `DatabaseSync`, Zod 4, React 19, Vite 8, Vitest 4 and Testing Library.
 
-**Implementation evidence (18 July 2026):** The governed domain, migration, projections, storage, service gates, readiness, API, evaluation seed and responsive five-view Matter 360 workspace are implemented on `feat/proceedings`. The API is command-complete; the first in-product command creates the internal court workspace with an explicit no-filing/no-issue warning. Full verification passed with 66 test files / 311 tests, both strict TypeScript targets and the Vite production build.
+**Implementation evidence (18 July 2026):** The governed domain, migration, projections, storage, service gates, readiness, API, evaluation seed and responsive five-view Matter 360 workspace are implemented. The API and permission-gated UI are command-complete for authority, filings, service, applications, orders, directions, hearings and their distinct verified events. Full verification passed with 66 test files / 314 tests, both strict TypeScript targets and the Vite production build; command dialogs are emitted as a separate lazy chunk.
 
 ## Global Constraints
 

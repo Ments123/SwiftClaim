@@ -164,6 +164,7 @@ SwiftClaim records source facts, calculations and human decisions. It does not a
 - applications whose granted outcome requires the resulting sealed order, and hearings whose factual outcome never masquerades as an order;
 - atomic directions with responsibility, due dates, sanctions as expressly stated, evidence-backed satisfaction and sealed-order-only relief or waiver;
 - critical next-date, overdue-direction, service-review and unaccepted-performance summaries on desktop and mobile;
+- permission-gated, lazily loaded command dialogs for issue authority, filings, recipient service, applications, sealed orders, atomic directions, hearings and their separately verified events;
 - objective workflow readiness plus tenant-scoped, optimistic, idempotent, audited and append-only commands.
 
 SwiftClaim has no live HMCTS filing integration in this build and makes no autonomous legal conclusion. Filing, service, issue, compliance, relief, disposal and procedural effect must be confirmed by an authorised human from retained sources. The responsible solicitor must verify the current CPR and apply it to the matter.

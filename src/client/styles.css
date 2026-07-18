@@ -4285,6 +4285,7 @@ a {
 .proceedings-record span { color: var(--muted); font-size: .7rem; }
 .proceedings-record h4 { margin-top: 3px; font-size: .86rem; }
 .proceedings-record strong { max-width: 280px; color: var(--blue-700); font-size: .72rem; text-align: right; }
+.proceedings-record__actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
 .proceedings-empty { padding: 35px; display: grid; justify-items: center; gap: 7px; color: var(--muted); text-align: center; }
 .proceedings-empty p { margin: 0; max-width: 520px; font-size: .8rem; }
 
@@ -4297,6 +4298,7 @@ a {
   .proceedings-details { grid-template-columns: 1fr; }
   .proceedings-record { align-items: flex-start; flex-direction: column; }
   .proceedings-record strong { max-width: none; text-align: left; }
+  .proceedings-record__actions { width: 100%; justify-content: space-between; }
 }
 .negotiation-content { padding: 20px; border-top: 1px solid var(--line); }
 .negotiation-view > header { margin-bottom: 13px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }.negotiation-view h3 { margin: 3px 0; font-size: 1rem; }
