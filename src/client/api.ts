@@ -1242,6 +1242,48 @@ export interface PleadingStatementRecord {
   projection: { filingState: string; serviceState: string };
 }
 
+export interface DisclosureSuggestionRecord {
+  id: string; relevance: string; privilegeWarning: string; rationale: string;
+  model: string; policyVersion: string; sourceHash: string; citedSpans: string[];
+  suggestedIssueTags: string[]; createdBy: string; createdAt: string; provisional: true;
+}
+export interface DisclosureCandidateRecord {
+  id: string; reviewId: string; documentVersionId: string; evidenceItemId: string | null;
+  custodian: string; sourceNote: string; version: number; createdAt: string; updatedAt: string;
+  suggestions: DisclosureSuggestionRecord[];
+  decisions: Array<{ id: string; decision: string; redactionRequired: boolean; reason: string; reviewedBy: string; reviewedAt: string; createdAt: string }>;
+  privilegeReviews: Array<{ id: string; category: string; outcome: string; basis: string; reviewedAt: string }>;
+  redactions: Array<{ id: string; originalDocumentVersionId: string; redactedDocumentVersionId: string; status: string; reviewedAt: string }>;
+  projection: { state: string; restricted: boolean; canList: boolean; effectiveDocumentVersionId: string; suggestion: unknown; decision: unknown; privilege: unknown; redaction: unknown };
+}
+export interface RestrictedDisclosureCandidate {
+  id: string; reviewId: string; version: number; restricted: true; state: string; createdAt: string; updatedAt: string;
+}
+export interface DisclosureListRecord {
+  id: string; reviewId: string; disclosingPartyId: string; snapshotNumber: number; title: string;
+  blockers: Array<{ candidateId: string; reason: string }>; generatedBy: string; generatedAt: string;
+  note: string; entries: Array<{ id: string; candidateId: string; documentVersionId: string; decisionId: string; description: string }>;
+}
+export interface InspectionRequestRecord {
+  id: string; disclosureListId: string; requestingPartyId: string; version: number; receivedAt: string;
+  note: string; itemIds: string[]; createdAt: string; updatedAt: string; events: unknown[];
+  projection: { received: boolean; acknowledged: boolean; refused: boolean; agreed: boolean; provided: boolean; completed: boolean; events: unknown[] };
+}
+export interface DisclosureReviewRecord {
+  id: string; proceedingId: string; disclosingPartyId: string; directionId: string | null;
+  scopeVersion: number; scopeNote: string; dateFrom: string | null; dateTo: string | null;
+  custodians: string[]; issueTags: string[]; version: number; createdAt: string; updatedAt: string;
+  candidates: Array<DisclosureCandidateRecord | RestrictedDisclosureCandidate>;
+  lists: DisclosureListRecord[]; inspectionRequests: InspectionRequestRecord[];
+}
+export interface DisclosureWorkspace {
+  proceedingId: string; actingUserId: string; reviews: DisclosureReviewRecord[];
+  sources: { documents: Array<{ id: string; title: string; version: number; originalName: string }>;
+    parties: Array<{ id: string; name: string; kind: string }> };
+  permissions: { canRead: boolean; canPrepare: boolean; canReview: boolean; canReviewPrivilege: boolean;
+    canWaivePrivilege: boolean; canApproveRedaction: boolean; canGenerateList: boolean; canRecordExternal: boolean };
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'
@@ -1254,6 +1296,7 @@ export type MatterSection =
   | 'damages_offers'
   | 'negotiation_settlement'
   | 'proceedings'
+  | 'disclosure'
   | 'tasks_calendar'
   | 'time_finance'
   | 'chronology'

@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   Download,
   FileCheck2,
+  FileSearch,
   FileText,
   Fingerprint,
   MessageSquareText,
@@ -17,7 +18,7 @@ import {
   UserRound,
   UsersRound,
 } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
 
 import {
   ApiError,
@@ -49,6 +50,8 @@ import { ProceedingsPanel } from '../components/matter/ProceedingsPanel.js';
 import { PropertyTenancyPanel } from '../components/matter/PropertyTenancyPanel.js';
 import { ProtocolExpertsPanel } from '../components/matter/ProtocolExpertsPanel.js';
 import { RepairsQuantumPanel } from '../components/matter/RepairsQuantumPanel.js';
+
+const DisclosurePanel = lazy(() => import('../components/matter/DisclosurePanel.js').then((module) => ({ default: module.DisclosurePanel })));
 
 interface MatterPageProps {
   matterId: string;
@@ -347,7 +350,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   }, [matterId]);
 
   useEffect(() => {
-    if (section !== 'proceedings' || proceedingsWorkspace || proceedingsError) return;
+    if (!['proceedings', 'disclosure'].includes(section) || proceedingsWorkspace || proceedingsError) return;
     const controller = new AbortController();
     void loadProceedingsWorkspace(controller.signal);
     return () => controller.abort();
@@ -576,6 +579,18 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
 
       {section === 'proceedings' && proceedingsWorkspace ? (
         <ProceedingsPanel matterId={matterId} workspace={proceedingsWorkspace} onRefresh={() => loadProceedingsWorkspace()} />
+      ) : null}
+
+      {section === 'disclosure' && proceedingsLoading && !proceedingsWorkspace ? (
+        <section className="surface tab-surface page-state"><FileSearch size={30} /><h2>Loading disclosure proceeding…</h2></section>
+      ) : null}
+      {section === 'disclosure' && proceedingsError && !proceedingsWorkspace ? (
+        <section className="surface tab-surface page-state"><FileSearch size={30} /><h2>Disclosure workspace unavailable</h2><p>{proceedingsError}</p><button className="button button--secondary" type="button" onClick={() => void loadProceedingsWorkspace()}><RefreshCw size={15} /> Retry</button></section>
+      ) : null}
+      {section === 'disclosure' && proceedingsWorkspace?.proceeding ? (
+        <Suspense fallback={<section className="surface tab-surface page-state">Loading disclosure controls…</section>}>
+          <DisclosurePanel matterId={matterId} proceedingId={proceedingsWorkspace.proceeding.id} />
+        </Suspense>
       ) : null}
 
       {aggregate && section === 'documents' ? (

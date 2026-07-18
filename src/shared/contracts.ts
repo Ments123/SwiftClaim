@@ -2396,6 +2396,120 @@ export const completeDefaultReviewSchema = z.object({
   if (input.outcome === 'human_review_completed' && input.blockers.length > 0) context.addIssue({ code: 'custom', path: ['blockers'], message: 'Resolve or record blockers before completing review.' });
 });
 
+const disclosureUuidSchema = z.uuid();
+const disclosureNullableUuidSchema = disclosureUuidSchema.nullable();
+const disclosureCommandKeySchema = z.string().trim().min(8).max(200);
+const disclosureDateTimeSchema = z.string().datetime({ offset: true });
+
+export const disclosureDecisionSchema = z.enum([
+  'disclose', 'withhold_privilege', 'withhold_not_relevant',
+  'withhold_other', 'duplicate_only', 'review_required',
+]);
+export const disclosurePrivilegeCategorySchema = z.enum([
+  'legal_advice', 'litigation', 'joint', 'without_prejudice_or_protected',
+  'other', 'none', 'uncertain',
+]);
+export const disclosurePrivilegeOutcomeSchema = z.enum([
+  'restricted', 'not_privileged', 'further_review', 'waived',
+]);
+
+export const openDisclosureReviewSchema = z.object({
+  idempotencyKey: disclosureCommandKeySchema,
+  disclosingPartyId: disclosureUuidSchema,
+  directionId: disclosureNullableUuidSchema,
+  scopeNote: z.string().trim().min(20).max(8_000),
+  dateFrom: z.string().date().nullable(),
+  dateTo: z.string().date().nullable(),
+  custodians: z.array(z.string().trim().min(1).max(300)).max(100),
+  issueTags: z.array(z.string().trim().min(1).max(100)).max(100),
+}).strict();
+
+export const addDisclosureCandidateSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: disclosureCommandKeySchema,
+  documentVersionId: disclosureUuidSchema,
+  evidenceItemId: disclosureNullableUuidSchema,
+  custodian: z.string().trim().max(300),
+  sourceNote: z.string().trim().min(10).max(4_000),
+}).strict();
+
+export const createDisclosureAiSuggestionSchema = z.object({
+  idempotencyKey: disclosureCommandKeySchema,
+  relevance: z.enum(['likely_relevant', 'likely_not_relevant', 'uncertain']),
+  privilegeWarning: z.enum(['none', 'possible', 'likely']),
+  rationale: z.string().trim().min(10).max(2_000),
+  model: z.string().trim().min(2).max(120),
+  policyVersion: z.string().trim().min(2).max(120),
+  sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+  citedSpans: z.array(z.string().trim().min(1).max(500)).max(20),
+  suggestedIssueTags: z.array(z.string().trim().min(1).max(100)).max(100),
+}).strict();
+
+export const recordDisclosureDecisionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: disclosureCommandKeySchema,
+  decision: disclosureDecisionSchema,
+  reason: z.string().trim().min(20).max(4_000),
+  redactionRequired: z.boolean(),
+  reviewedAt: disclosureDateTimeSchema,
+}).strict();
+
+export const recordDisclosurePrivilegeReviewSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: disclosureCommandKeySchema,
+  category: disclosurePrivilegeCategorySchema,
+  outcome: disclosurePrivilegeOutcomeSchema,
+  basis: z.string().trim().min(20).max(4_000),
+  authorityDocumentVersionId: disclosureNullableUuidSchema,
+  confirmExposure: z.boolean(),
+  reviewedAt: disclosureDateTimeSchema,
+}).strict().superRefine((input, context) => {
+  if (input.outcome === 'waived' && !input.confirmExposure) {
+    context.addIssue({ code: 'custom', path: ['confirmExposure'], message: 'Privilege waiver requires explicit exposure confirmation.' });
+  }
+});
+
+export const approveDisclosureRedactionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: disclosureCommandKeySchema,
+  redactedDocumentVersionId: disclosureUuidSchema,
+  categories: z.array(z.string().trim().min(1).max(100)).min(1).max(30),
+  reason: z.string().trim().min(20).max(4_000),
+  visualReviewConfirmed: z.literal(true),
+  reviewedAt: disclosureDateTimeSchema,
+}).strict();
+
+export const generateDisclosureListSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: disclosureCommandKeySchema,
+  title: z.string().trim().min(3).max(500),
+  generatedAt: disclosureDateTimeSchema,
+  note: z.string().trim().min(10).max(4_000),
+}).strict();
+
+export const createInspectionRequestSchema = z.object({
+  idempotencyKey: disclosureCommandKeySchema,
+  disclosureListId: disclosureUuidSchema,
+  requestingPartyId: disclosureUuidSchema,
+  entryIds: z.array(disclosureUuidSchema).min(1).max(500),
+  receivedAt: disclosureDateTimeSchema,
+  note: z.string().trim().min(10).max(4_000),
+}).strict();
+
+export const recordInspectionEventSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  idempotencyKey: disclosureCommandKeySchema,
+  eventType: z.enum(['received', 'acknowledged', 'refused', 'agreed', 'provided', 'completed']),
+  occurredAt: disclosureDateTimeSchema,
+  providedDocumentVersionId: disclosureNullableUuidSchema,
+  deliveryEvidenceDocumentVersionId: disclosureNullableUuidSchema,
+  note: z.string().trim().min(10).max(4_000),
+}).strict().superRefine((input, context) => {
+  if (input.eventType === 'provided' && !input.providedDocumentVersionId && !input.deliveryEvidenceDocumentVersionId) {
+    context.addIssue({ code: 'custom', path: ['providedDocumentVersionId'], message: 'Provision requires exact document or delivery evidence.' });
+  }
+});
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -2493,6 +2607,15 @@ export type ReviewPleadingDeadlineInput = z.infer<typeof reviewPleadingDeadlineS
 export type RecordAmendmentAuthorityInput = z.infer<typeof recordAmendmentAuthoritySchema>;
 export type CreateDefaultReviewInput = z.infer<typeof createDefaultReviewSchema>;
 export type CompleteDefaultReviewInput = z.infer<typeof completeDefaultReviewSchema>;
+export type OpenDisclosureReviewInput = z.infer<typeof openDisclosureReviewSchema>;
+export type AddDisclosureCandidateInput = z.infer<typeof addDisclosureCandidateSchema>;
+export type CreateDisclosureAiSuggestionInput = z.infer<typeof createDisclosureAiSuggestionSchema>;
+export type RecordDisclosureDecisionInput = z.infer<typeof recordDisclosureDecisionSchema>;
+export type RecordDisclosurePrivilegeReviewInput = z.infer<typeof recordDisclosurePrivilegeReviewSchema>;
+export type ApproveDisclosureRedactionInput = z.infer<typeof approveDisclosureRedactionSchema>;
+export type GenerateDisclosureListInput = z.infer<typeof generateDisclosureListSchema>;
+export type CreateInspectionRequestInput = z.infer<typeof createInspectionRequestSchema>;
+export type RecordInspectionEventInput = z.infer<typeof recordInspectionEventSchema>;
 
 export interface ApiErrorBody {
   error: {

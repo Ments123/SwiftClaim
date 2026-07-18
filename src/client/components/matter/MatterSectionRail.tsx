@@ -77,6 +77,7 @@ const SECTION_ITEMS: ReadonlyArray<{
     available: true,
   },
   { id: 'proceedings', label: 'Proceedings', icon: Gavel, available: true },
+  { id: 'disclosure', label: 'Disclosure', icon: FileSearch, available: true },
   {
     id: 'tasks_calendar',
     label: 'Tasks & calendar',

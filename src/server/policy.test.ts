@@ -113,4 +113,17 @@ describe('role capabilities', () => {
     expect(hasCapability(user('finance'), 'pleadings.read')).toBe(false);
     expect(hasCapability(user('readonly'), 'pleadings.read')).toBe(false);
   });
+
+  it('separates disclosure preparation, review and privilege waiver', () => {
+    expect(hasCapability(user('partner'), 'disclosure.waive_privilege')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'disclosure.review')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'disclosure.review_privilege')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'disclosure.waive_privilege')).toBe(false);
+    expect(hasCapability(user('paralegal'), 'disclosure.read')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'disclosure.prepare')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'disclosure.record_external')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'disclosure.review')).toBe(false);
+    expect(hasCapability(user('finance'), 'disclosure.read')).toBe(false);
+    expect(hasCapability(user('readonly'), 'disclosure.read')).toBe(false);
+  });
 });

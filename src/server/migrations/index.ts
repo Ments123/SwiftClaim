@@ -10,6 +10,7 @@ import { communicationsMigration } from './007-communications.js';
 import { negotiationSettlementMigration } from './008-negotiation-settlement.js';
 import { governedProceedingsMigration } from './009-governed-proceedings.js';
 import { governedPleadingsResponseMigration } from './010-governed-pleadings-response.js';
+import { governedDisclosureEvidenceMigration } from './011-governed-disclosure-evidence.js';
 import type { Migration } from './types.js';
 
 export const migrations: Migration[] = [
@@ -23,6 +24,7 @@ export const migrations: Migration[] = [
   negotiationSettlementMigration,
   governedProceedingsMigration,
   governedPleadingsResponseMigration,
+  governedDisclosureEvidenceMigration,
 ];
 
 export function runMigrations(
