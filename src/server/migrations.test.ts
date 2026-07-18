@@ -21,10 +21,54 @@ describe('runMigrations', () => {
       { version: 6, name: 'repairs quantum and offers' },
       { version: 7, name: 'governed communications' },
       { version: 8, name: 'negotiation and settlement authority' },
+      { version: 9, name: 'governed proceedings' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates tenant-safe proceedings tables with immutable legal events', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-16T14:00:00.000Z');
+
+    const tableNames = (database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(tableNames).toEqual(expect.arrayContaining([
+      'court_proceedings',
+      'proceeding_authority_versions',
+      'court_proceeding_events',
+      'court_documents',
+      'court_filings',
+      'court_filing_documents',
+      'court_filing_events',
+      'court_service_records',
+      'court_service_events',
+      'court_applications',
+      'court_application_events',
+      'court_orders',
+      'court_directions',
+      'court_direction_events',
+      'court_hearings',
+      'court_hearing_events',
+      'proceedings_command_receipts',
+    ]));
+
+    const triggerNames = (database
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger'
+        AND (name LIKE 'court_%' OR name LIKE 'proceeding_%')`)
+      .all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'proceeding_authority_versions_no_update',
+      'court_proceeding_events_no_delete',
+      'court_filing_events_no_update',
+      'court_service_events_no_delete',
+      'court_orders_no_update',
+      'court_direction_events_no_delete',
+      'court_hearing_events_no_update',
+      'proceedings_command_receipts_no_delete',
+    ]));
   });
 
   it('creates negotiation and settlement tables with immutable authority records', () => {

@@ -29,6 +29,7 @@ import {
   type EvidenceWorkspace,
   type MatterIntakeProfile,
   type NegotiationWorkspace,
+  type ProceedingsWorkspace,
   type MatterSection,
   type ProtectedOffer,
   type ProtocolWorkspace,
@@ -44,6 +45,7 @@ import { MatterHeader } from '../components/matter/MatterHeader.js';
 import { NegotiationSettlementPanel } from '../components/matter/NegotiationSettlementPanel.js';
 import { MatterSectionRail } from '../components/matter/MatterSectionRail.js';
 import { OperationalOverview } from '../components/matter/OperationalOverview.js';
+import { ProceedingsPanel } from '../components/matter/ProceedingsPanel.js';
 import { PropertyTenancyPanel } from '../components/matter/PropertyTenancyPanel.js';
 import { ProtocolExpertsPanel } from '../components/matter/ProtocolExpertsPanel.js';
 import { RepairsQuantumPanel } from '../components/matter/RepairsQuantumPanel.js';
@@ -92,6 +94,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [negotiationWorkspace, setNegotiationWorkspace] = useState<NegotiationWorkspace>();
   const [negotiationLoading, setNegotiationLoading] = useState(false);
   const [negotiationError, setNegotiationError] = useState('');
+  const [proceedingsWorkspace, setProceedingsWorkspace] = useState<ProceedingsWorkspace>();
+  const [proceedingsLoading, setProceedingsLoading] = useState(false);
+  const [proceedingsError, setProceedingsError] = useState('');
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>('overview');
   const [partyOpen, setPartyOpen] = useState(false);
@@ -160,6 +165,9 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setNegotiationWorkspace(undefined);
     setNegotiationLoading(false);
     setNegotiationError('');
+    setProceedingsWorkspace(undefined);
+    setProceedingsLoading(false);
+    setProceedingsError('');
     setMutationError('');
     setSection('overview');
     void loadAll(controller.signal);
@@ -323,6 +331,28 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     `/api/matters/${matterId}/negotiation-settlement/protected`,
   ), [matterId]);
 
+  const loadProceedingsWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setProceedingsLoading(true);
+    setProceedingsError('');
+    try {
+      setProceedingsWorkspace(await request<ProceedingsWorkspace>(
+        `/api/matters/${matterId}/proceedings`, { signal },
+      ));
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setProceedingsError(reason instanceof Error ? reason.message : 'The proceedings workspace is unavailable.');
+    } finally {
+      if (!signal?.aborted) setProceedingsLoading(false);
+    }
+  }, [matterId]);
+
+  useEffect(() => {
+    if (section !== 'proceedings' || proceedingsWorkspace || proceedingsError) return;
+    const controller = new AbortController();
+    void loadProceedingsWorkspace(controller.signal);
+    return () => controller.abort();
+  }, [loadProceedingsWorkspace, proceedingsError, proceedingsWorkspace, section]);
+
   const loadProtectedOffers = useCallback(async () => {
     const response = await request<{ offers: ProtectedOffer[] }>(
       `/api/matters/${matterId}/offers/protected`,
@@ -391,6 +421,8 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
         negotiation_settlement:
           (negotiationWorkspace?.actions.length ?? 0) +
           (negotiationWorkspace?.settlements.length ?? 0),
+        proceedings: proceedingsWorkspace ?
+          proceedingsWorkspace.directions.length + proceedingsWorkspace.hearings.length : undefined,
       }
     : { tasks_calendar: summary.nextActions.length };
 
@@ -532,6 +564,18 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
 
       {section === 'negotiation_settlement' && negotiationWorkspace ? (
         <NegotiationSettlementPanel matterId={matterId} workspace={negotiationWorkspace} onRefresh={() => loadNegotiationWorkspace()} loadProtected={loadProtectedNegotiation} />
+      ) : null}
+
+      {section === 'proceedings' && proceedingsLoading && !proceedingsWorkspace ? (
+        <section className="surface tab-surface" aria-busy="true"><div className="skeleton skeleton--heading" /><div className="skeleton skeleton--matter" /></section>
+      ) : null}
+
+      {section === 'proceedings' && proceedingsError && !proceedingsWorkspace ? (
+        <section className="surface tab-surface page-state"><Scale size={30} /><h2>Proceedings workspace unavailable</h2><p>{proceedingsError}</p><button className="button button--secondary" type="button" onClick={() => void loadProceedingsWorkspace()}><RefreshCw size={15} /> Retry</button></section>
+      ) : null}
+
+      {section === 'proceedings' && proceedingsWorkspace ? (
+        <ProceedingsPanel matterId={matterId} workspace={proceedingsWorkspace} onRefresh={() => loadProceedingsWorkspace()} />
       ) : null}
 
       {aggregate && section === 'documents' ? (

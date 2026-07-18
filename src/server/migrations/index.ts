@@ -8,6 +8,7 @@ import { protocolExpertsMigration } from './005-protocol-experts.js';
 import { repairsQuantumMigration } from './006-repairs-quantum.js';
 import { communicationsMigration } from './007-communications.js';
 import { negotiationSettlementMigration } from './008-negotiation-settlement.js';
+import { governedProceedingsMigration } from './009-governed-proceedings.js';
 import type { Migration } from './types.js';
 
 export const migrations: Migration[] = [
@@ -19,6 +20,7 @@ export const migrations: Migration[] = [
   repairsQuantumMigration,
   communicationsMigration,
   negotiationSettlementMigration,
+  governedProceedingsMigration,
 ];
 
 export function runMigrations(

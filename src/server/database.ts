@@ -15,6 +15,8 @@ import { ProtocolService } from './protocol/service.js';
 import { ProtocolStore } from './protocol/store.js';
 import { QuantumService } from './quantum/service.js';
 import { QuantumStore } from './quantum/store.js';
+import { ProceedingsService } from './proceedings/service.js';
+import { ProceedingsStore } from './proceedings/store.js';
 import { hashPassword } from './security.js';
 import { MatterStore } from './store.js';
 import { seedWorkflowDefinitions } from './workflow/definitions.js';
@@ -2599,4 +2601,115 @@ export function seedNegotiationSettlementEvaluation(database: DatabaseSync): voi
       explicitConfirmation: true,
     }, audit);
   }
+}
+
+export function seedProceedingsEvaluation(database: DatabaseSync): void {
+  const now = () => new Date('2026-09-01T10:00:00.000Z');
+  const ava: SessionUser = {
+    id: SEED_IDS.ava, firmId: SEED_IDS.northstarFirm, firmName: 'Northstar Legal',
+    email: 'ava@northstar.test', name: 'Ava Morgan', role: 'solicitor',
+  };
+  const partner: SessionUser = {
+    ...ava, id: SEED_IDS.partner, email: 'partner@northstar.test',
+    name: 'Marcus Reed', role: 'partner',
+  };
+  const matterId = SEED_IDS.northstarMatter;
+  const audit = { requestId: 'seed-governed-proceedings', ipAddress: '127.0.0.1' };
+  const service = new ProceedingsService(new ProceedingsStore(database, now), now);
+  const documents = database.prepare(`SELECT dv.id FROM document_versions dv
+    JOIN documents d ON d.id = dv.document_id AND d.firm_id = dv.firm_id
+    WHERE dv.firm_id = ? AND d.matter_id = ? ORDER BY dv.created_at, dv.id LIMIT 2`)
+    .all(ava.firmId, matterId) as Array<{ id: string }>;
+  if (documents.length < 2) return;
+  const claimForm = documents[0]!.id;
+  const evidence = documents[1]!.id;
+  const instruction = database.prepare(`SELECT id FROM client_instructions
+    WHERE firm_id = ? AND matter_id = ? ORDER BY created_at DESC LIMIT 1`)
+    .get(ava.firmId, matterId) as { id: string } | undefined;
+  if (!instruction) return;
+
+  const proceeding = service.createProceeding(ava, matterId, {
+    idempotencyKey: 'seed-proceedings-create', procedureType: 'part7',
+    jurisdiction: 'england_wales', courtName: 'County Court at Central London',
+    courtCode: 'CLCC', hearingCentre: 'Central London',
+  }, audit);
+  service.createAuthorityVersion(partner, matterId, proceeding.id, {
+    idempotencyKey: 'seed-proceedings-authority', clientInstructionId: instruction.id,
+    procedureType: 'part7', scope: 'Issue the exact synthetic claim against the named landlord.',
+    defendantPartyIds: [SEED_IDS.northstarOpponent],
+    claimFormDocumentVersionId: claimForm, particularsDocumentVersionId: evidence,
+    preparedByUserId: ava.id, approvedByUserId: partner.id,
+    limitationPosition: 'Limitation was reviewed against the retained synthetic matter sources.',
+    risks: 'Issue, service, evidence, timetable and costs risks were independently reviewed.',
+    reviewNote: 'Marcus independently approved the exact retained synthetic issue documents.',
+    expiresAt: null, reviewOn: '2026-12-31', explicitApproval: true,
+  }, audit);
+  service.recordProceedingEvent(ava, matterId, proceeding.id, {
+    expectedVersion: 2, idempotencyKey: 'seed-proceedings-issued', eventType: 'issued',
+    occurredAt: '2026-09-10T10:00:00.000Z',
+    note: 'Court issue was verified against the exact retained sealed claim form.',
+    sourceDocumentVersionId: claimForm, courtName: 'County Court at Central London',
+    caseNumber: 'K00CL123', track: 'fast', supersedesEventId: null,
+    correctionReason: '', explicitHumanConfirmation: true,
+  }, audit);
+  const filing = service.createFiling(ava, matterId, proceeding.id, {
+    idempotencyKey: 'seed-proceedings-filing', purpose: 'File claim form and particulars for issue.',
+    documentVersionIds: [claimForm, evidence], submissionChannel: 'portal',
+    feePosition: 'paid', feeMinor: 45500, currency: 'GBP',
+  }, audit);
+  service.recordFilingEvent(ava, matterId, proceeding.id, filing.id, {
+    expectedVersion: 1, idempotencyKey: 'seed-proceedings-filing-accepted',
+    eventType: 'accepted', occurredAt: '2026-09-10T10:05:00.000Z',
+    note: 'Court acceptance was confirmed from the retained portal receipt.',
+    receiptDocumentVersionId: claimForm, externalReference: 'CE-FILE-001', rejectionReason: '',
+    supersedesEventId: null, correctionReason: '', explicitHumanConfirmation: true,
+  }, audit);
+  const served = service.createServiceRecord(ava, matterId, proceeding.id, {
+    idempotencyKey: 'seed-proceedings-service', courtDocumentVersionId: claimForm,
+    recipientPartyId: SEED_IDS.northstarOpponent, method: 'first_class_post',
+    serviceAddress: '1 Synthetic Street, London', jurisdictionPosition: 'within_jurisdiction',
+  }, audit);
+  service.recordServiceEvent(ava, matterId, proceeding.id, served.id, {
+    expectedVersion: 1, idempotencyKey: 'seed-proceedings-service-reviewed',
+    eventType: 'human_reviewed', occurredAt: '2026-09-14T10:00:00.000Z',
+    note: 'Ava reviewed the retained service evidence and applicable CPR source.',
+    preciseStep: '', assertedServiceAt: '2026-09-10T15:00:00.000Z',
+    assertedDeemedServiceAt: '2026-09-14T00:00:00.000Z', reviewPosition: 'reviewed',
+    ruleSourceTitle: 'CPR Part 6',
+    ruleSourceUrl: 'https://www.justice.gov.uk/courts/procedure-rules/civil/rules/part06',
+    evidenceDocumentVersionIds: [claimForm], evidenceCommunicationEntryIds: [],
+    supersedesEventId: null, correctionReason: '', explicitHumanConfirmation: true,
+  }, audit);
+  const order = service.createOrder(ava, matterId, proceeding.id, {
+    idempotencyKey: 'seed-proceedings-order', orderType: 'directions',
+    title: 'Allocation and directions order', orderDate: '2026-09-20',
+    takesEffectAt: '2026-09-20T00:00:00.000Z', judgeName: 'District Judge Example',
+    judicialTitle: 'District Judge', sealedDocumentVersionId: evidence,
+    variesOrderId: null, supersedesOrderId: null, servicePosition: 'court_to_serve',
+    explicitSealedConfirmation: true,
+  }, audit);
+  const direction = service.createDirection(ava, matterId, proceeding.id, {
+    idempotencyKey: 'seed-proceedings-expert-direction', sourceOrderId: order.id,
+    ruleSourceTitle: '', ruleSourceUrl: '', responsiblePartyId: SEED_IDS.northstarClient,
+    category: 'expert_evidence', requirementText: 'Serve the jointly instructed expert evidence.',
+    dueAt: '2026-10-20T16:00:00.000Z', timezone: 'Europe/London',
+    sanctionExpresslyStated: false, sanctionText: '', assignedUserId: ava.id,
+  }, audit);
+  service.recordDirectionEvent(ava, matterId, proceeding.id, direction.id, {
+    expectedVersion: 1, idempotencyKey: 'seed-proceedings-performance-asserted',
+    eventType: 'performance_asserted', occurredAt: '2026-10-19T15:00:00.000Z',
+    note: 'Performance was asserted but retained evidence has not yet been accepted.',
+    evidenceDocumentVersionIds: [], evidenceFilingIds: [], evidenceServiceRecordIds: [],
+    sourceOrderId: null, revisedDueAt: null, supersedesEventId: null,
+    correctionReason: '', explicitHumanConfirmation: true,
+  }, audit);
+  service.createHearing(ava, matterId, proceeding.id, {
+    idempotencyKey: 'seed-proceedings-hearing', hearingType: 'case_management',
+    title: 'Case management conference', listingNoticeVersionId: evidence,
+    startsAt: '2026-11-10T10:00:00.000Z', endsAt: '2026-11-10T11:00:00.000Z',
+    timezone: 'Europe/London', courtName: 'County Court at Central London',
+    venue: 'Courtroom 3', attendanceMode: 'in_person', remoteAccessDetails: '',
+    privacyPosition: 'public', judgeName: '', advocateNames: ['A. Advocate'],
+    attendeeNames: ['Maya Clarke'], bundleDocumentVersionId: null,
+  }, audit);
 }

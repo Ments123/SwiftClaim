@@ -36,6 +36,10 @@ import { intakeRoutes } from './intake/routes.js';
 import { IntakeService } from './intake/service.js';
 import { IntakeStore } from './intake/store.js';
 import { DatabaseNegotiationReadiness } from './negotiation/readiness.js';
+import { DatabaseProceedingsReadiness } from './proceedings/readiness.js';
+import { proceedingsRoutes } from './proceedings/routes.js';
+import { ProceedingsService } from './proceedings/service.js';
+import { ProceedingsStore } from './proceedings/store.js';
 import { negotiationRoutes } from './negotiation/routes.js';
 import { NegotiationService } from './negotiation/service.js';
 import { NegotiationStore } from './negotiation/store.js';
@@ -185,6 +189,8 @@ export async function buildApp(
   const negotiationStore = new NegotiationStore(database, now);
   const negotiationService = new NegotiationService(negotiationStore);
   const negotiationReadiness = new DatabaseNegotiationReadiness(database, now);
+  const proceedingsReadiness = new DatabaseProceedingsReadiness(database, now);
+  const proceedingsService = new ProceedingsService(new ProceedingsStore(database, now), now);
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -193,6 +199,7 @@ export async function buildApp(
     protocolService,
     quantumService,
     negotiationReadiness,
+    proceedingsReadiness,
   );
   const intakeStore = new IntakeStore(database, now);
   const intakeService = new IntakeService(
@@ -612,6 +619,15 @@ export async function buildApp(
 
   await app.register(communicationRoutes, {
     service: communicationService,
+    requireUser,
+    auditContext: (request) => ({
+      requestId: request.id,
+      ipAddress: request.ip,
+    }),
+  });
+
+  await app.register(proceedingsRoutes, {
+    service: proceedingsService,
     requireUser,
     auditContext: (request) => ({
       requestId: request.id,

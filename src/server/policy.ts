@@ -48,6 +48,14 @@ export type Capability =
   | 'settlement.manage'
   | 'settlement.conclude'
   | 'settlement.waive_obligation'
+  | 'proceedings.read'
+  | 'proceedings.prepare'
+  | 'proceedings.approve_issue'
+  | 'proceedings.record_external'
+  | 'proceedings.manage_directions'
+  | 'proceedings.manage_hearings'
+  | 'proceedings.record_order'
+  | 'proceedings.record_relief'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -90,6 +98,14 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'settlement.manage',
     'settlement.conclude',
     'settlement.waive_obligation',
+    'proceedings.read',
+    'proceedings.prepare',
+    'proceedings.approve_issue',
+    'proceedings.record_external',
+    'proceedings.manage_directions',
+    'proceedings.manage_hearings',
+    'proceedings.record_order',
+    'proceedings.record_relief',
     'administration.view',
   ],
   partner: [
@@ -131,6 +147,14 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'settlement.manage',
     'settlement.conclude',
     'settlement.waive_obligation',
+    'proceedings.read',
+    'proceedings.prepare',
+    'proceedings.approve_issue',
+    'proceedings.record_external',
+    'proceedings.manage_directions',
+    'proceedings.manage_hearings',
+    'proceedings.record_order',
+    'proceedings.record_relief',
     'administration.view',
   ],
   solicitor: [
@@ -163,6 +187,13 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'negotiation.record_external_action',
     'settlement.manage',
     'settlement.conclude',
+    'proceedings.read',
+    'proceedings.prepare',
+    'proceedings.record_external',
+    'proceedings.manage_directions',
+    'proceedings.manage_hearings',
+    'proceedings.record_order',
+    'proceedings.record_relief',
   ],
   paralegal: [
     'matter.read',
@@ -180,6 +211,10 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'communications.write',
     'negotiation.read',
     'negotiation.prepare',
+    'proceedings.read',
+    'proceedings.prepare',
+    'proceedings.manage_directions',
+    'proceedings.manage_hearings',
   ],
   finance: ['matter.read'],
   readonly: ['matter.read', 'communications.read'],

@@ -88,4 +88,17 @@ describe('role capabilities', () => {
     expect(hasCapability(user('finance'), 'negotiation.read')).toBe(false);
     expect(hasCapability(user('readonly'), 'negotiation.read')).toBe(false);
   });
+
+  it('separates proceedings preparation, issue approval and external court acts', () => {
+    expect(hasCapability(user('partner'), 'proceedings.approve_issue')).toBe(true);
+    expect(hasCapability(user('partner'), 'proceedings.record_relief')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'proceedings.record_external')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'proceedings.record_order')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'proceedings.prepare')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'proceedings.manage_directions')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'proceedings.approve_issue')).toBe(false);
+    expect(hasCapability(user('paralegal'), 'proceedings.record_external')).toBe(false);
+    expect(hasCapability(user('finance'), 'proceedings.read')).toBe(false);
+    expect(hasCapability(user('readonly'), 'proceedings.read')).toBe(false);
+  });
 });

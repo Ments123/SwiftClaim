@@ -188,6 +188,11 @@ describe('canonical database', () => {
         name: 'negotiation and settlement authority',
         checksumLength: 64,
       },
+      {
+        version: 9,
+        name: 'governed proceedings',
+        checksumLength: 64,
+      },
     ]);
   });
 
