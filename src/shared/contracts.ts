@@ -2510,6 +2510,121 @@ export const recordInspectionEventSchema = z.object({
   }
 });
 
+const financeUuidSchema = z.uuid();
+const financeNullableUuidSchema = financeUuidSchema.nullable();
+const financeCommandKeySchema = z.string().trim().min(8).max(200);
+const financeMoneySchema = z.number().int().safe();
+const financeNonNegativeMoneySchema = financeMoneySchema.nonnegative();
+const financeDateTimeSchema = z.string().datetime({ offset: true });
+const financeCurrencySchema = z.literal('GBP');
+
+export const decideFinanceActivitySuggestionSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  decision: z.enum(['accept', 'edit', 'split', 'reject']),
+  reason: z.string().trim().min(5).max(2_000),
+}).strict();
+export const startFinanceTimerSchema = z.object({
+  idempotencyKey: financeCommandKeySchema,
+  activityCode: z.string().trim().min(2).max(100), costsPhase: z.string().trim().min(2).max(100),
+  narrative: z.string().trim().min(5).max(2_000),
+}).strict();
+export const stopFinanceTimerSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+}).strict();
+export const submitFinanceTimeSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, workDate: z.iso.date(),
+  minutes: z.number().int().safe().positive().max(24 * 60),
+  narrative: z.string().trim().min(10).max(4_000),
+  activityCode: z.string().trim().min(2).max(100), costsPhase: z.string().trim().min(2).max(100),
+  chargeable: z.boolean(), sourceKind: z.enum(['manual', 'timer', 'task', 'communication_call', 'document_version', 'filing', 'hearing']),
+  sourceId: financeNullableUuidSchema,
+}).strict();
+export const approveFinanceTimeSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  approvedAt: financeDateTimeSchema, approvalNote: z.string().trim().min(10).max(2_000),
+  explicitHumanApproval: z.literal(true),
+}).strict();
+export const reverseFinanceTimeSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  reason: z.string().trim().min(10).max(2_000), replacementEntryId: financeNullableUuidSchema,
+  reversedAt: financeDateTimeSchema, explicitHumanApproval: z.literal(true),
+}).strict();
+export const createFinanceRateCardSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, name: z.string().trim().min(3).max(300),
+  description: z.string().trim().min(10).max(2_000), currency: financeCurrencySchema,
+}).strict();
+export const addFinanceRateVersionSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  effectiveFrom: z.iso.date(), effectiveTo: z.iso.date().nullable(),
+  entries: z.array(z.object({ grade: z.string().trim().min(1).max(100), userId: financeNullableUuidSchema,
+    activityCode: z.string().trim().max(100), matterId: financeNullableUuidSchema,
+    hourlyRateMinor: financeNonNegativeMoneySchema, currency: financeCurrencySchema }).strict()).min(1).max(500),
+  note: z.string().trim().min(10).max(2_000),
+}).strict();
+export const activateFinanceRateVersionSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  rateVersionId: financeUuidSchema, approvedAt: financeDateTimeSchema,
+  approvalNote: z.string().trim().min(10).max(2_000), explicitHumanApproval: z.literal(true),
+}).strict();
+export const createFinanceEstimateVersionSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, effectiveOn: z.iso.date(),
+  scope: z.string().trim().min(10).max(4_000), feesMinor: financeNonNegativeMoneySchema,
+  disbursementsMinor: financeNonNegativeMoneySchema, vatMinor: financeNonNegativeMoneySchema,
+  overallLimitMinor: financeNonNegativeMoneySchema, currency: financeCurrencySchema,
+  reviewOn: z.iso.date().nullable(), sourceDocumentVersionId: financeNullableUuidSchema,
+  approvalNote: z.string().trim().min(10).max(2_000), explicitApproval: z.literal(true),
+}).strict();
+export const recordFinanceWarningEventSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  eventType: z.enum(['reviewed', 'client_notified']),
+  occurredAt: financeDateTimeSchema, evidenceDocumentVersionId: financeNullableUuidSchema,
+  note: z.string().trim().min(10).max(2_000),
+}).strict();
+export const createFinanceDisbursementSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, supplier: z.string().trim().min(2).max(300),
+  invoiceReference: z.string().trim().max(200), category: z.string().trim().min(2).max(100),
+  description: z.string().trim().min(10).max(4_000), netMinor: financeNonNegativeMoneySchema,
+  vatMinor: financeNonNegativeMoneySchema, grossMinor: financeNonNegativeMoneySchema,
+  currency: financeCurrencySchema, invoiceDate: z.iso.date().nullable(), dueOn: z.iso.date().nullable(),
+  sourceDocumentVersionId: financeNullableUuidSchema,
+}).strict().superRefine((input, context) => {
+  if (input.netMinor + input.vatMinor !== input.grossMinor)
+    context.addIssue({ code: 'custom', path: ['grossMinor'], message: 'Gross amount must equal net plus VAT.' });
+});
+export const recordFinanceDisbursementEventSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  eventType: z.enum(['approved', 'incurred', 'paid_external', 'cancelled', 'corrected']),
+  occurredAt: financeDateTimeSchema, evidenceDocumentVersionId: financeNullableUuidSchema,
+  note: z.string().trim().min(10).max(2_000),
+}).strict().superRefine((input, context) => {
+  if (input.eventType === 'paid_external' && !input.evidenceDocumentVersionId)
+    context.addIssue({ code: 'custom', path: ['evidenceDocumentVersionId'], message: 'External payment requires exact retained evidence.' });
+});
+const financeJournalLineSchema = z.object({
+  accountId: financeUuidSchema, debitMinor: financeNonNegativeMoneySchema,
+  creditMinor: financeNonNegativeMoneySchema, currency: financeCurrencySchema,
+  matterId: financeNullableUuidSchema, memo: z.string().trim().min(2).max(500),
+}).strict().refine((line) => (line.debitMinor > 0) !== (line.creditMinor > 0), { message: 'Each journal line requires exactly one positive side.' });
+export const prepareFinanceJournalSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, accountingDate: z.iso.date(),
+  sourceKind: z.enum(['wip_control', 'disbursement_control', 'reversal', 'other']),
+  sourceId: financeUuidSchema, description: z.string().trim().min(10).max(2_000),
+  lines: z.array(financeJournalLineSchema).min(2).max(100),
+}).strict();
+export const approveFinanceJournalSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  approvedAt: financeDateTimeSchema, note: z.string().trim().min(10).max(2_000),
+  explicitHumanApproval: z.literal(true),
+}).strict();
+export const postFinanceJournalSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  postedAt: financeDateTimeSchema, explicitHumanConfirmation: z.literal(true),
+}).strict();
+export const reverseFinanceJournalSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, accountingDate: z.iso.date(),
+  reason: z.string().trim().min(10).max(2_000), explicitHumanApproval: z.literal(true),
+}).strict();
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -2616,6 +2731,23 @@ export type ApproveDisclosureRedactionInput = z.infer<typeof approveDisclosureRe
 export type GenerateDisclosureListInput = z.infer<typeof generateDisclosureListSchema>;
 export type CreateInspectionRequestInput = z.infer<typeof createInspectionRequestSchema>;
 export type RecordInspectionEventInput = z.infer<typeof recordInspectionEventSchema>;
+export type DecideFinanceActivitySuggestionInput = z.infer<typeof decideFinanceActivitySuggestionSchema>;
+export type StartFinanceTimerInput = z.infer<typeof startFinanceTimerSchema>;
+export type StopFinanceTimerInput = z.infer<typeof stopFinanceTimerSchema>;
+export type SubmitFinanceTimeInput = z.infer<typeof submitFinanceTimeSchema>;
+export type ApproveFinanceTimeInput = z.infer<typeof approveFinanceTimeSchema>;
+export type ReverseFinanceTimeInput = z.infer<typeof reverseFinanceTimeSchema>;
+export type CreateFinanceRateCardInput = z.infer<typeof createFinanceRateCardSchema>;
+export type AddFinanceRateVersionInput = z.infer<typeof addFinanceRateVersionSchema>;
+export type ActivateFinanceRateVersionInput = z.infer<typeof activateFinanceRateVersionSchema>;
+export type CreateFinanceEstimateVersionInput = z.infer<typeof createFinanceEstimateVersionSchema>;
+export type RecordFinanceWarningEventInput = z.infer<typeof recordFinanceWarningEventSchema>;
+export type CreateFinanceDisbursementInput = z.infer<typeof createFinanceDisbursementSchema>;
+export type RecordFinanceDisbursementEventInput = z.infer<typeof recordFinanceDisbursementEventSchema>;
+export type PrepareFinanceJournalInput = z.infer<typeof prepareFinanceJournalSchema>;
+export type ApproveFinanceJournalInput = z.infer<typeof approveFinanceJournalSchema>;
+export type PostFinanceJournalInput = z.infer<typeof postFinanceJournalSchema>;
+export type ReverseFinanceJournalInput = z.infer<typeof reverseFinanceJournalSchema>;
 
 export interface ApiErrorBody {
   error: {

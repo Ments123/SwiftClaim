@@ -24,10 +24,62 @@ describe('runMigrations', () => {
       { version: 9, name: 'governed proceedings' },
       { version: 10, name: 'governed pleadings and response control' },
       { version: 11, name: 'governed disclosure and evidence' },
+      { version: 12, name: 'governed finance foundation' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates tenant-safe immutable finance and journal infrastructure', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-19T12:00:00.000Z');
+    const tableNames = (database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(tableNames).toEqual(expect.arrayContaining([
+      'finance_activity_suggestions', 'finance_activity_suggestion_decisions',
+      'finance_timer_sessions', 'finance_timer_events', 'finance_rate_cards',
+      'finance_rate_versions', 'finance_rate_version_events', 'finance_rate_entries', 'finance_time_entries',
+      'finance_time_approvals', 'finance_time_entry_events', 'finance_estimates', 'finance_estimate_versions',
+      'finance_estimate_thresholds', 'finance_warning_events', 'finance_disbursements',
+      'finance_disbursement_events', 'finance_accounts', 'finance_accounting_periods',
+      'finance_journals', 'finance_journal_lines', 'finance_journal_events',
+      'finance_command_receipts', 'finance_firm_events', 'finance_integration_outbox',
+    ]));
+    const triggerNames = (database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'finance_%'").all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'finance_rate_versions_no_update', 'finance_time_entry_events_no_delete',
+      'finance_rate_version_events_no_delete',
+      'finance_time_approvals_no_update', 'finance_firm_events_no_delete',
+      'finance_accounts_no_update', 'finance_accounts_no_delete',
+      'finance_journals_no_delete', 'finance_journal_lines_no_update',
+      'finance_journal_events_no_delete', 'finance_command_receipts_no_update',
+    ]));
+    const lineSql = String((database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'finance_journal_lines'").get() as { sql: string }).sql);
+    expect(lineSql).toMatch(/debit_minor > 0.*credit_minor = 0|credit_minor > 0.*debit_minor = 0/s);
+    for (const table of [
+      'finance_activity_suggestions', 'finance_rate_entries', 'finance_time_entries',
+      'finance_estimate_versions', 'finance_estimate_warnings',
+      'finance_disbursements', 'finance_journal_lines',
+    ]) {
+      const tableSql = String((database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string }).sql);
+      expect(tableSql, `${table} must reject values outside JavaScript's exact integer range`).toContain('9007199254740991');
+    }
+    const receiptSql = String((database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'finance_command_receipts'").get() as { sql: string }).sql);
+    expect(receiptSql).toMatch(/scope_kind.*firm.*matter/s);
+    expect(receiptSql).toMatch(/matter_id TEXT(?! NOT NULL)/);
+    const suggestionColumns = (database.prepare('PRAGMA table_info(finance_activity_suggestions)').all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(suggestionColumns).toContain('observed_at');
+    const timeColumns = (database.prepare('PRAGMA table_info(finance_time_entries)').all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(timeColumns).not.toContain('status');
+    const disbursementColumns = (database.prepare('PRAGMA table_info(finance_disbursements)').all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(disbursementColumns).not.toContain('version');
+    for (const eventTable of [
+      'finance_timer_events', 'finance_rate_version_events', 'finance_time_entry_events',
+      'finance_warning_events', 'finance_disbursement_events', 'finance_journal_events',
+    ]) {
+      const columns = (database.prepare(`PRAGMA table_info(${eventTable})`).all() as Array<{ name: string }>).map(({ name }) => name);
+      expect(columns, `${eventTable} needs deterministic causal ordering`).toContain('sequence');
+    }
   });
 
   it('creates tenant-safe immutable disclosure records', () => {

@@ -97,6 +97,18 @@ function mapMatter(row: Row) {
   };
 }
 
+function mapFinanceMatter(row: Row): ReturnType<typeof mapMatter> {
+  return {
+    ...mapMatter(row),
+    description: '',
+    externalSource: null,
+    externalId: null,
+    importBatchId: null,
+    nextDeadline: null,
+    openTaskCount: 0,
+  };
+}
+
 export function appendTimeline(
   database: DatabaseSync,
   event: {
@@ -238,7 +250,7 @@ export class MatterStore {
         .all(...scope.params, ...searchParams),
     );
 
-    return rows.map(mapMatter);
+    return rows.map(user.role === 'finance' ? mapFinanceMatter : mapMatter);
   }
 
   canWriteMatter(user: SessionUser, matterId: string): boolean {
@@ -281,6 +293,19 @@ export class MatterStore {
     );
 
     if (!matterRow) return undefined;
+
+    if (user.role === 'finance') {
+      return {
+        matter: mapFinanceMatter(matterRow),
+        parties: [],
+        tasks: [],
+        documents: [],
+        timeline: [],
+        audit: [],
+        permissions: { canWrite: false, canCreateMatter: false },
+        team: [],
+      };
+    }
 
     const parties = asRows(
       this.database
@@ -991,6 +1016,21 @@ export class MatterStore {
 
   getDashboard(user: SessionUser) {
     const matters = this.listMatters(user);
+    if (user.role === 'finance') {
+      return {
+        summary: {
+          activeMatters: matters.filter((matter) => matter.status === 'open').length,
+          overdueTasks: 0,
+          dueThisWeek: 0,
+          highRiskMatters: matters.filter(
+            (matter) => matter.riskLevel === 'high' || matter.riskLevel === 'critical',
+          ).length,
+        },
+        urgentTasks: [],
+        recentMatters: matters.slice(0, 4),
+        team: [],
+      };
+    }
     const matterIds = new Set(matters.map((matter) => matter.id));
     const scope = readScope(user);
     const tasks = asRows(

@@ -70,6 +70,16 @@ export type Capability =
   | 'disclosure.approve_redaction'
   | 'disclosure.generate_list'
   | 'disclosure.record_external'
+  | 'finance.read_matter'
+  | 'finance.read_firm'
+  | 'finance.record_time'
+  | 'finance.approve_time'
+  | 'finance.manage_rates'
+  | 'finance.manage_estimates'
+  | 'finance.manage_disbursements'
+  | 'finance.prepare_journal'
+  | 'finance.approve_journal'
+  | 'finance.post_journal'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -130,6 +140,10 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'disclosure.review_privilege', 'disclosure.waive_privilege',
     'disclosure.approve_redaction', 'disclosure.generate_list',
     'disclosure.record_external',
+    'finance.read_matter', 'finance.read_firm', 'finance.record_time',
+    'finance.approve_time', 'finance.manage_rates', 'finance.manage_estimates',
+    'finance.manage_disbursements', 'finance.prepare_journal',
+    'finance.approve_journal', 'finance.post_journal',
     'administration.view',
   ],
   partner: [
@@ -189,6 +203,9 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'disclosure.review_privilege', 'disclosure.waive_privilege',
     'disclosure.approve_redaction', 'disclosure.generate_list',
     'disclosure.record_external',
+    'finance.read_matter', 'finance.read_firm', 'finance.record_time',
+    'finance.approve_time', 'finance.manage_rates', 'finance.manage_estimates',
+    'finance.manage_disbursements', 'finance.prepare_journal', 'finance.approve_journal',
     'administration.view',
   ],
   solicitor: [
@@ -237,6 +254,8 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'disclosure.read', 'disclosure.prepare', 'disclosure.review',
     'disclosure.review_privilege', 'disclosure.approve_redaction',
     'disclosure.generate_list', 'disclosure.record_external',
+    'finance.read_matter', 'finance.record_time', 'finance.approve_time',
+    'finance.manage_estimates',
   ],
   paralegal: [
     'matter.read',
@@ -262,8 +281,13 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'pleadings.prepare',
     'pleadings.record_external',
     'disclosure.read', 'disclosure.prepare', 'disclosure.record_external',
+    'finance.read_matter', 'finance.record_time',
   ],
-  finance: ['matter.read'],
+  finance: [
+    'matter.read', 'finance.read_matter', 'finance.read_firm',
+    'finance.manage_rates', 'finance.manage_estimates', 'finance.manage_disbursements',
+    'finance.prepare_journal', 'finance.approve_journal', 'finance.post_journal',
+  ],
   readonly: ['matter.read', 'communications.read'],
 };
 

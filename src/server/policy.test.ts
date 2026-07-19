@@ -126,4 +126,17 @@ describe('role capabilities', () => {
     expect(hasCapability(user('finance'), 'disclosure.read')).toBe(false);
     expect(hasCapability(user('readonly'), 'disclosure.read')).toBe(false);
   });
+
+  it('separates finance visibility, time approval and journal duties', () => {
+    expect(hasCapability(user('finance'), 'finance.read_firm')).toBe(true);
+    expect(hasCapability(user('finance'), 'finance.manage_disbursements')).toBe(true);
+    expect(hasCapability(user('finance'), 'finance.prepare_journal')).toBe(true);
+    expect(hasCapability(user('partner'), 'finance.approve_journal')).toBe(true);
+    expect(hasCapability(user('partner'), 'finance.post_journal')).toBe(false);
+    expect(hasCapability(user('solicitor'), 'finance.record_time')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'finance.approve_time')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'finance.record_time')).toBe(true);
+    expect(hasCapability(user('paralegal'), 'finance.approve_time')).toBe(false);
+    expect(hasCapability(user('readonly'), 'finance.read_matter')).toBe(false);
+  });
 });

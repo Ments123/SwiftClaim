@@ -6,6 +6,7 @@ import {
   createDatabase,
   seedCommunicationsEvaluation,
   seedDisclosureEvaluation,
+  seedFinanceEvaluation,
   seedNegotiationSettlementEvaluation,
   seedDatabase,
   seedProtocolExpertsEvaluation,
@@ -51,6 +52,7 @@ if (shouldSeed) {
   seedProceedingsEvaluation(database);
   seedPleadingsEvaluation(database);
   seedDisclosureEvaluation(database);
+  seedFinanceEvaluation(database);
 }
 
 const app = await buildApp({

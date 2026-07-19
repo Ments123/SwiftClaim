@@ -52,10 +52,12 @@ import { ProtocolExpertsPanel } from '../components/matter/ProtocolExpertsPanel.
 import { RepairsQuantumPanel } from '../components/matter/RepairsQuantumPanel.js';
 
 const DisclosurePanel = lazy(() => import('../components/matter/DisclosurePanel.js').then((module) => ({ default: module.DisclosurePanel })));
+const FinancePanel = lazy(() => import('../components/matter/FinancePanel.js').then((module) => ({ default: module.FinancePanel })));
 
 interface MatterPageProps {
   matterId: string;
   onBack: () => void;
+  financeOnly?: boolean;
 }
 
 function formatDate(value: string, includeTime = false) {
@@ -73,7 +75,7 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
-export function MatterPage({ matterId, onBack }: MatterPageProps) {
+export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPageProps) {
   const [summary, setSummary] = useState<Matter360Data>();
   const [aggregate, setAggregate] = useState<MatterAggregate>();
   const [summaryError, setSummaryError] = useState('');
@@ -101,7 +103,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
   const [proceedingsLoading, setProceedingsLoading] = useState(false);
   const [proceedingsError, setProceedingsError] = useState('');
   const [mutationError, setMutationError] = useState('');
-  const [section, setSection] = useState<MatterSection>('overview');
+  const [section, setSection] = useState<MatterSection>(financeOnly ? 'time_finance' : 'overview');
   const [partyOpen, setPartyOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
   const [documentOpen, setDocumentOpen] = useState(false);
@@ -172,10 +174,10 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
     setProceedingsLoading(false);
     setProceedingsError('');
     setMutationError('');
-    setSection('overview');
+    setSection(financeOnly ? 'time_finance' : 'overview');
     void loadAll(controller.signal);
     return () => controller.abort();
-  }, [loadAll]);
+  }, [financeOnly, loadAll]);
 
   const profileSectionActive =
     section === 'client_household' || section === 'property_tenancy';
@@ -428,6 +430,15 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
           proceedingsWorkspace.directions.length + proceedingsWorkspace.hearings.length : undefined,
       }
     : { tasks_calendar: summary.nextActions.length };
+  const financeDocumentSources = (aggregate?.documents ?? []).flatMap((document) =>
+    document.latestVersion ? [{
+      id: document.latestVersion.id,
+      documentId: document.id,
+      title: document.title,
+      category: document.category,
+      version: document.latestVersion.version,
+      originalName: document.latestVersion.originalName,
+    }] : []);
 
   return (
     <main className="page page--matter">
@@ -439,6 +450,7 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
           activeSection={section}
           onSelect={setSection}
           counts={sectionCounts}
+          financeOnly={financeOnly}
         />
         <div className="matter-workspace__content">
           {mutationError ? <div className="inline-notice inline-notice--error" role="alert">{mutationError}</div> : null}
@@ -590,6 +602,12 @@ export function MatterPage({ matterId, onBack }: MatterPageProps) {
       {section === 'disclosure' && proceedingsWorkspace?.proceeding ? (
         <Suspense fallback={<section className="surface tab-surface page-state">Loading disclosure controls…</section>}>
           <DisclosurePanel matterId={matterId} proceedingId={proceedingsWorkspace.proceeding.id} />
+        </Suspense>
+      ) : null}
+
+      {section === 'time_finance' ? (
+        <Suspense fallback={<section className="surface tab-surface page-state">Loading time and finance…</section>}>
+          <FinancePanel matterId={matterId} availableDocumentSources={financeDocumentSources} />
         </Suspense>
       ) : null}
 
