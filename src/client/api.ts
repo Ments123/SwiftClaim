@@ -1284,6 +1284,128 @@ export interface DisclosureWorkspace {
     canWaivePrivilege: boolean; canApproveRedaction: boolean; canGenerateList: boolean; canRecordExternal: boolean };
 }
 
+export type FinanceCurrency = 'GBP';
+export type FinanceNotConnected = { state: 'not_connected' };
+
+export interface FinanceActivitySuggestion {
+  id: string; userId: string; sourceKind: string; sourceId: string; minutes: number;
+  observedAt: string; proposedActivityCode: string; proposedCostsPhase: string;
+  proposedNarrative: string; confidence: 'high' | 'medium' | 'low'; explanation: string;
+  model: string; policyVersion: string; inputHash: string; version: number;
+  status: 'pending' | 'accept' | 'edit' | 'split' | 'reject';
+  decisions: Array<{ id: string; decision: string; reason: string | null; decidedBy: string; decidedAt: string }>;
+  createdAt: string; provisional: true; label: 'AI suggestion — human review required';
+}
+
+export interface FinanceTimer {
+  id: string; matterId: string; userId: string; activityCode: string; costsPhase: string;
+  narrative: string | null; status: 'running' | 'stopped' | 'cancelled'; startedAt: string;
+  stoppedAt: string | null; elapsedMinutes: number | null; version: number;
+  createdAt: string; updatedAt: string;
+}
+
+export interface FinanceTimeEntry {
+  id: string; userId: string; workDate: string; minutes: number; narrative: string | null;
+  activityCode: string; costsPhase: string; chargeable: boolean; sourceKind: string;
+  sourceId: string | null; currency: FinanceCurrency;
+  status: 'submitted' | 'approved' | 'rejected' | 'reversed'; version: number;
+  createdBy: string; createdAt: string; events: Array<Record<string, unknown>>;
+  approvalId: string | null; rateVersionId: string | null; rateEntryId: string | null;
+  gradeSnapshot: string | null; hourlyRateMinor: number | null; chargeMinor: number | null;
+  remainderNumerator: number | null; denominator: number | null; approvedBy: string | null;
+  approvedAt: string | null; approvalNote: string | null;
+}
+
+export interface FinanceEstimateVersion {
+  id: string; estimateId: string; versionNumber: number; effectiveOn: string; scope: string | null;
+  feesMinor: number; disbursementsMinor: number; vatMinor: number; overallLimitMinor: number;
+  currency: FinanceCurrency; reviewOn: string | null; sourceDocumentVersionId: string | null;
+  approvalNote: string | null; approvedBy: string; createdAt: string;
+  thresholds: Array<{ id: string; thresholdPercent: number }>;
+}
+
+export interface FinanceWarning {
+  id: string; thresholdId: string; estimateVersionId: string; thresholdPercent: number;
+  crossedAt: string; exposureMinor: number; currency: FinanceCurrency;
+  state: 'open' | 'closed_by_new_estimate'; latestEvent: string; version: number;
+  events: Array<Record<string, unknown>>;
+}
+
+export interface FinanceDisbursement {
+  id: string; supplier: string; invoiceReference: string; category: string; description: string;
+  netMinor: number; vatMinor: number; grossMinor: number; currency: FinanceCurrency;
+  invoiceDate: string | null; dueOn: string | null; sourceDocumentVersionId: string | null;
+  createdBy: string; createdAt: string;
+  status: 'proposed' | 'approved' | 'incurred' | 'paid_external' | 'cancelled' | 'corrected';
+  version: number; events: Array<Record<string, unknown>>; approved: boolean; incurred: boolean;
+  paidExternally: boolean; cancelled: boolean; corrected: boolean; billed: false; recovered: false;
+  duplicateFindings: Array<{ matchedDisbursementId: string; reasons: string[]; provisional: true; label: string }>;
+}
+
+export interface FinanceJournalLine {
+  id: string; lineNumber: number; accountId: string; accountClass: string;
+  designation: 'client' | 'office' | 'neutral'; accountCode: string; accountName: string;
+  matterId: string; debitMinor: number; creditMinor: number; currency: FinanceCurrency; memo: string;
+}
+
+export interface FinanceJournal {
+  id: string; periodId: string; accountingDate: string;
+  sourceKind: 'wip_control' | 'disbursement_control' | 'reversal' | 'other'; sourceId: string;
+  description: string; currency: FinanceCurrency; reversesJournalId: string | null;
+  preparedBy: string; preparedAt: string; approvedBy: string | null; approvedAt: string | null;
+  postedBy: string | null; postedAt: string | null;
+  status: 'draft' | 'approved' | 'posted' | 'rejected' | 'reversed'; version: number;
+  totalDebitMinor: number; totalCreditMinor: number; lines: FinanceJournalLine[];
+  events: Array<Record<string, unknown>>;
+}
+
+export interface FinanceRateCard {
+  id: string; name: string; description: string; currency: FinanceCurrency; version: number;
+  createdBy: string; createdAt: string; updatedAt: string;
+  versions: Array<{
+    id: string; rateCardId: string; versionNumber: number; effectiveFrom: string;
+    effectiveTo: string | null; note: string; preparedBy: string; createdAt: string;
+    status: 'draft' | 'active' | 'retired'; events: Array<Record<string, unknown>>;
+    entries: Array<{ id: string; grade: string; userId: string | null; activityCode: string;
+      matterId: string | null; hourlyRateMinor: number; currency: FinanceCurrency }>;
+  }>;
+}
+
+export interface FinanceDocumentSource {
+  id: string; documentId: string; title: string; category: string; version: number; originalName: string;
+}
+
+export interface FinanceWorkspace {
+  matterId: string; actingUserId: string;
+  permissions: {
+    canRecordTime: boolean; canApproveTime: boolean; canManageRates: boolean;
+    canManageEstimates: boolean; canManageDisbursements: boolean;
+    canPrepareJournal: boolean; canApproveJournal: boolean; canPostJournal: boolean;
+  };
+  suggestions: FinanceActivitySuggestion[]; timers: FinanceTimer[]; timeEntries: FinanceTimeEntry[];
+  warnings: FinanceWarning[]; estimates: FinanceEstimateVersion[];
+  disbursements: FinanceDisbursement[];
+  ledger: {
+    journals: FinanceJournal[];
+    balances: Array<{ accountId: string; matterId: string | null; designation: 'client' | 'office' | 'neutral';
+      currency: FinanceCurrency; debitMinor: number; creditMinor: number; netMinor: number }>;
+  };
+  snapshot: {
+    provisionalTime: { minutes: number; estimatedChargeMinor: number; unpricedCount: number; currency: FinanceCurrency };
+    approvedWip: { minutes: number; amountMinor: number; currency: FinanceCurrency };
+    disbursements: {
+      proposedMinor: number; approvedExposureMinor: number; cancelledMinor: number;
+      byStatus: Record<'proposed' | 'approved' | 'incurred' | 'paid_external' | 'cancelled', number>;
+      currency: FinanceCurrency;
+    };
+    estimate: null | { versionId: string; overallLimitMinor: number; currentExposureMinor: number;
+      varianceMinor: number; currency: FinanceCurrency };
+    clientBalance: FinanceNotConnected; officeBalance: FinanceNotConnected;
+    billed: FinanceNotConnected; paid: FinanceNotConnected; recovered: FinanceNotConnected;
+  };
+  sources: { documents: FinanceDocumentSource[] };
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'
