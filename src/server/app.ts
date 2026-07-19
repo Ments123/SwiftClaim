@@ -34,6 +34,9 @@ import { EvidenceStore } from './evidence/store.js';
 import { disclosureRoutes } from './disclosure/routes.js';
 import { DisclosureService } from './disclosure/service.js';
 import { DisclosureStore } from './disclosure/store.js';
+import { financeRoutes } from './finance/routes.js';
+import { FinanceService } from './finance/service.js';
+import { FinanceStore } from './finance/store.js';
 import { IntakeConflictService } from './intake/conflicts.js';
 import { intakeRoutes } from './intake/routes.js';
 import { IntakeService } from './intake/service.js';
@@ -199,6 +202,7 @@ export async function buildApp(
   const proceedingsService = new ProceedingsService(new ProceedingsStore(database, now), now);
   const pleadingsService = new PleadingsService(new PleadingsStore(database, now));
   const disclosureService = new DisclosureService(new DisclosureStore(database, now));
+  const financeService = new FinanceService(new FinanceStore(database, now));
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -572,8 +576,40 @@ export async function buildApp(
         id: string;
         documentId: string;
       };
+      if (user.role === 'finance') {
+        throw new HttpError(404, 'NOT_FOUND', 'The requested resource was not found.');
+      }
       requireMatter(user, id);
       const file = matterStore.getDocumentFile(user.firmId, id, documentId);
+      if (!file) {
+        throw new HttpError(404, 'NOT_FOUND', 'The requested resource was not found.');
+      }
+      const safeName = file.originalName.replace(/["\\\r\n]/g, '_');
+      reply
+        .type(file.mimeType)
+        .header('content-length', String(file.sizeBytes))
+        .header('x-content-type-options', 'nosniff')
+        .header('content-disposition', `attachment; filename="${safeName}"`);
+      return reply.send(openStoredFile(options.storagePath, file.storageKey));
+    },
+  );
+
+  app.get(
+    '/api/matters/:id/document-versions/:versionId/download',
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { id, versionId } = request.params as {
+        id: string;
+        versionId: string;
+      };
+      if (user.role === 'finance') {
+        if (!financeService.canAccessEvidenceVersion(user, id, versionId)) {
+          throw new HttpError(404, 'NOT_FOUND', 'The requested resource was not found.');
+        }
+      } else {
+        requireMatter(user, id);
+      }
+      const file = matterStore.getDocumentFileByVersion(user.firmId, id, versionId);
       if (!file) {
         throw new HttpError(404, 'NOT_FOUND', 'The requested resource was not found.');
       }
@@ -654,6 +690,12 @@ export async function buildApp(
 
   await app.register(disclosureRoutes, {
     service: disclosureService,
+    requireUser,
+    auditContext: (request) => ({ requestId: request.id, ipAddress: request.ip }),
+  });
+
+  await app.register(financeRoutes, {
+    service: financeService,
     requireUser,
     auditContext: (request) => ({ requestId: request.id, ipAddress: request.ip }),
   });
