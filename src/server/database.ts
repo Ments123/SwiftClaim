@@ -6,6 +6,9 @@ import { CommunicationService } from './communications/service.js';
 import { CommunicationStore } from './communications/store.js';
 import { DisclosureService } from './disclosure/service.js';
 import { DisclosureStore } from './disclosure/store.js';
+import { suggestTimeFromActivity } from './finance/activity.js';
+import { FinanceService } from './finance/service.js';
+import { FinanceStore } from './finance/store.js';
 import { migrations, runMigrations } from './migrations/index.js';
 import { NegotiationService } from './negotiation/service.js';
 import { NegotiationStore } from './negotiation/store.js';
@@ -84,6 +87,9 @@ export const SEED_IDS = {
   complaintEvidence: '76000000-0000-4000-8000-000000000002',
   repairEvidence: '76000000-0000-4000-8000-000000000003',
   bathroomPhotoEvidence: '76000000-0000-4000-8000-000000000004',
+  financeWipAccount: '93000000-0000-4000-8000-000000000001',
+  financeWipOffsetAccount: '93000000-0000-4000-8000-000000000002',
+  financeOpenPeriod: '93000000-0000-4000-8000-000000000003',
 } as const;
 
 interface SeedDatabaseOptions {
@@ -2868,5 +2874,272 @@ export function seedDisclosureEvaluation(database: DatabaseSync): void {
     expectedVersion: 1, idempotencyKey: 'seed-disclosure-inspection-provided', eventType: 'provided',
     occurredAt: fixedNow, providedDocumentVersionId: list.entries[0]!.documentVersionId,
     deliveryEvidenceDocumentVersionId: null, note: 'The exact synthetic inspection version was provided; completion remains unrecorded.',
+  }, audit);
+}
+
+export function seedFinanceEvaluation(database: DatabaseSync): void {
+  let financeNow = '2026-10-02T12:00:00.000Z';
+  const now = () => new Date(financeNow);
+  const ava: SessionUser = {
+    id: SEED_IDS.ava, firmId: SEED_IDS.northstarFirm, firmName: 'Northstar Legal',
+    email: 'ava@northstar.test', name: 'Ava Morgan', role: 'solicitor',
+  };
+  const ben: SessionUser = {
+    ...ava, id: SEED_IDS.ben, email: 'ben@northstar.test', name: 'Ben Foster', role: 'paralegal',
+  };
+  const partner: SessionUser = {
+    ...ava, id: SEED_IDS.partner, email: 'partner@northstar.test', name: 'Marcus Reed', role: 'partner',
+  };
+  const finance: SessionUser = {
+    ...ava, id: SEED_IDS.finance, email: 'finance@northstar.test', name: 'Priya Shah', role: 'finance',
+  };
+  const matterId = SEED_IDS.northstarMatter;
+  const call = database.prepare(`SELECT cs.id, cs.duration_seconds AS durationSeconds,
+    ce.direction FROM communication_call_sessions cs JOIN communication_entries ce
+      ON ce.id = cs.entry_id AND ce.firm_id = cs.firm_id AND ce.matter_id = cs.matter_id
+    WHERE cs.firm_id = ? AND cs.matter_id = ? AND cs.created_by = ?
+    ORDER BY cs.created_at, cs.id LIMIT 1`)
+    .get(ava.firmId, matterId, ava.id) as {
+      id: string; durationSeconds: number; direction: 'inbound' | 'outbound';
+    } | undefined;
+  const exactSources = database.prepare(`SELECT dv.id FROM document_versions dv
+    JOIN documents d ON d.id = dv.document_id AND d.firm_id = dv.firm_id
+    WHERE dv.firm_id = ? AND d.matter_id = ? AND dv.id IN (?, ?)`)
+    .all(ava.firmId, matterId, SEED_IDS.complaintVersion, SEED_IDS.repairVersion) as Array<{ id: string }>;
+  if (!call || exactSources.length !== 2) return;
+
+  const insertAccount = database.prepare(`INSERT OR IGNORE INTO finance_accounts (
+    id, firm_id, code, name, account_class, designation, currency, active, created_by, created_at
+  ) VALUES (?, ?, ?, ?, ?, 'neutral', 'GBP', 1, ?, ?)`);
+  insertAccount.run(
+    SEED_IDS.financeWipAccount, ava.firmId, 'WIP-CONTROL', 'Unbilled WIP control',
+    'wip_asset', finance.id, now().toISOString(),
+  );
+  insertAccount.run(
+    SEED_IDS.financeWipOffsetAccount, ava.firmId, 'WIP-OFFSET', 'WIP offset control',
+    'suspense', finance.id, now().toISOString(),
+  );
+  database.prepare(`INSERT OR IGNORE INTO finance_accounting_periods (
+    id, firm_id, starts_on, ends_on, status, closed_by, closed_at, created_by, created_at
+  ) VALUES (?, ?, '2026-01-01', '2026-12-31', 'open', NULL, NULL, ?, ?)`)
+    .run(SEED_IDS.financeOpenPeriod, ava.firmId, finance.id, now().toISOString());
+
+  const store = new FinanceStore(database, now);
+  const service = new FinanceService(store);
+  const audit = { requestId: 'seed-governed-finance', ipAddress: '127.0.0.1' };
+
+  const rateCard = service.createRateCard(finance, {
+    idempotencyKey: 'seed-finance-rate-card',
+    name: 'Northstar standard litigation rates',
+    description: 'Effective-dated synthetic litigation rates for governed finance evaluation.',
+    currency: 'GBP',
+  }, audit);
+  const rateVersion = service.addRateVersion(finance, rateCard.id, {
+    expectedVersion: 1,
+    idempotencyKey: 'seed-finance-rate-version',
+    effectiveFrom: '2026-01-01',
+    effectiveTo: null,
+    entries: [
+      {
+        grade: 'solicitor', userId: ava.id, activityCode: '', matterId: null,
+        hourlyRateMinor: 24_000, currency: 'GBP',
+      },
+      {
+        grade: 'paralegal', userId: ben.id, activityCode: '', matterId: null,
+        hourlyRateMinor: 12_000, currency: 'GBP',
+      },
+    ],
+    note: 'Priya prepared the exact fee-earner rates for independent activation.',
+  }, audit);
+  service.activateRateVersion(partner, rateCard.id, {
+    expectedVersion: 2,
+    idempotencyKey: 'seed-finance-rate-activation',
+    rateVersionId: rateVersion.id,
+    approvedAt: '2026-10-02T12:10:00.000Z',
+    approvalNote: 'Marcus independently checked the exact effective dates, grades and rates.',
+    explicitHumanApproval: true,
+  }, audit);
+
+  service.addEstimateVersion(partner, matterId, {
+    idempotencyKey: 'seed-finance-estimate',
+    effectiveOn: '2026-10-01',
+    scope: 'Professional fees, court fee and approved disbursements through the current litigation phase.',
+    feesMinor: 50_000,
+    disbursementsMinor: 45_500,
+    vatMinor: 14_500,
+    overallLimitMinor: 110_000,
+    currency: 'GBP',
+    reviewOn: '2026-10-30',
+    sourceDocumentVersionId: SEED_IDS.complaintVersion,
+    approvalNote: 'Marcus reviewed the exact scope, source, components and client cost limit.',
+    explicitApproval: true,
+  }, audit);
+
+  service.createSuggestion(ava, matterId, suggestTimeFromActivity({
+    sourceKind: 'communication_call',
+    id: call.id,
+    firmId: ava.firmId,
+    matterId,
+    userId: ava.id,
+    observedMinutes: Math.max(1, Math.ceil(Number(call.durationSeconds) / 60)),
+    occurredAt: '2026-08-20T08:30:00.000Z',
+    direction: call.direction,
+  }), audit);
+
+  const documentSuggestionInput = suggestTimeFromActivity({
+    sourceKind: 'document_version',
+    id: SEED_IDS.repairVersion,
+    firmId: ava.firmId,
+    matterId,
+    userId: ava.id,
+    observedMinutes: 120,
+    occurredAt: '2026-10-02T09:00:00.000Z',
+    documentCategory: 'retained_repair_evidence',
+  });
+  const documentSuggestion = service.createSuggestion(
+    ava, matterId, documentSuggestionInput, audit,
+  );
+  service.decideSuggestion(ava, matterId, documentSuggestion.id, {
+    expectedVersion: 1,
+    idempotencyKey: 'seed-finance-accept-document-suggestion',
+    decision: 'accept',
+    reason: 'Ava checked the exact document source, duration, coding and neutral narrative.',
+  }, audit);
+
+  const duplicateSuggestion = service.createSuggestion(ava, matterId, suggestTimeFromActivity({
+    sourceKind: 'task',
+    id: SEED_IDS.witnessTask,
+    firmId: ava.firmId,
+    matterId,
+    userId: ava.id,
+    observedMinutes: 120,
+    occurredAt: '2026-10-02T09:00:00.000Z',
+    taskType: 'document_review_duplicate',
+  }), audit);
+  service.decideSuggestion(ava, matterId, duplicateSuggestion.id, {
+    expectedVersion: 1,
+    idempotencyKey: 'seed-finance-reject-duplicate-suggestion',
+    decision: 'reject',
+    reason: 'Ava confirmed this task duplicated the separately retained document attendance.',
+  }, audit);
+
+  const submittedTime = service.submitTime(ava, matterId, {
+    idempotencyKey: 'seed-finance-submit-document-time',
+    workDate: '2026-10-02',
+    minutes: documentSuggestionInput.minutes,
+    narrative: documentSuggestionInput.proposedNarrative,
+    activityCode: documentSuggestionInput.proposedActivityCode,
+    costsPhase: documentSuggestionInput.proposedCostsPhase,
+    chargeable: true,
+    sourceKind: 'document_version',
+    sourceId: documentSuggestionInput.sourceId,
+  }, audit);
+  const approvedTime = service.approveTime(partner, matterId, submittedTime.id, {
+    expectedVersion: 1,
+    idempotencyKey: 'seed-finance-approve-document-time',
+    approvedAt: '2026-10-02T12:20:00.000Z',
+    approvalNote: 'Marcus independently checked the exact attendance, rate snapshot and WIP value.',
+    explicitHumanApproval: true,
+  }, audit);
+
+  financeNow = '2026-10-02T10:00:00.000Z';
+  const timer = service.startTimer(ava, matterId, {
+    idempotencyKey: 'seed-finance-start-timer',
+    activityCode: 'case_progression',
+    costsPhase: 'case_management',
+    narrative: 'Reviewing the source-backed matter chronology and next procedural steps.',
+  }, audit);
+  financeNow = '2026-10-02T10:07:30.000Z';
+  service.stopTimer(ava, matterId, timer.id, {
+    expectedVersion: 1,
+    idempotencyKey: 'seed-finance-stop-timer',
+  }, audit);
+  financeNow = '2026-10-02T12:00:00.000Z';
+
+  service.createDisbursement(finance, matterId, {
+    idempotencyKey: 'seed-finance-expert-disbursement',
+    supplier: 'Independent Expert Ltd',
+    invoiceReference: 'PROP-EXPERT-001',
+    category: 'expert_report',
+    description: 'Proposed expert inspection and report retained for human finance review.',
+    netMinor: 100_000,
+    vatMinor: 20_000,
+    grossMinor: 120_000,
+    currency: 'GBP',
+    invoiceDate: '2026-10-01',
+    dueOn: '2026-10-31',
+    sourceDocumentVersionId: SEED_IDS.complaintVersion,
+  }, audit);
+  const courtFee = service.createDisbursement(finance, matterId, {
+    idempotencyKey: 'seed-finance-court-fee',
+    supplier: 'HM Courts & Tribunals Service',
+    invoiceReference: 'COURT-FEE-001',
+    category: 'court_fee',
+    description: 'Court issue fee supported by the exact retained filing evidence.',
+    netMinor: 45_500,
+    vatMinor: 0,
+    grossMinor: 45_500,
+    currency: 'GBP',
+    invoiceDate: '2026-10-01',
+    dueOn: null,
+    sourceDocumentVersionId: SEED_IDS.repairVersion,
+  }, audit);
+  const approvedCourtFee = service.recordDisbursementEvent(finance, matterId, courtFee.id, {
+    expectedVersion: 1,
+    idempotencyKey: 'seed-finance-approve-court-fee',
+    eventType: 'approved',
+    occurredAt: '2026-10-02T12:30:00.000Z',
+    evidenceDocumentVersionId: SEED_IDS.repairVersion,
+    note: 'Priya checked the exact court fee, matter allocation and retained evidence.',
+  }, audit);
+  service.recordDisbursementEvent(finance, matterId, courtFee.id, {
+    expectedVersion: approvedCourtFee.version,
+    idempotencyKey: 'seed-finance-incur-court-fee',
+    eventType: 'incurred',
+    occurredAt: '2026-10-02T12:40:00.000Z',
+    evidenceDocumentVersionId: SEED_IDS.repairVersion,
+    note: 'Priya recorded the incurred court fee without asserting or posting external payment.',
+  }, audit);
+
+  if (approvedTime.chargeMinor === null) {
+    throw new Error('The governed finance seed did not produce an approved WIP value.');
+  }
+  const preparedJournal = service.prepareJournal(partner, matterId, {
+    idempotencyKey: 'seed-finance-wip-journal',
+    accountingDate: '2026-10-02',
+    sourceKind: 'wip_control',
+    sourceId: approvedTime.id,
+    description: 'Record approved WIP in balanced non-cash control accounts.',
+    lines: [
+      {
+        accountId: SEED_IDS.financeWipAccount,
+        debitMinor: approvedTime.chargeMinor,
+        creditMinor: 0,
+        currency: 'GBP',
+        matterId: null,
+        memo: 'Recognise approved unbilled WIP',
+      },
+      {
+        accountId: SEED_IDS.financeWipOffsetAccount,
+        debitMinor: 0,
+        creditMinor: approvedTime.chargeMinor,
+        currency: 'GBP',
+        matterId: null,
+        memo: 'Offset approved unbilled WIP control',
+      },
+    ],
+  }, audit);
+  const approvedJournal = service.approveJournal(finance, matterId, preparedJournal.id, {
+    expectedVersion: 1,
+    idempotencyKey: 'seed-finance-approve-wip-journal',
+    approvedAt: '2026-10-02T12:50:00.000Z',
+    note: 'Priya independently checked the exact WIP source, period and balanced neutral accounts.',
+    explicitHumanApproval: true,
+  }, audit);
+  service.postJournal(finance, matterId, preparedJournal.id, {
+    expectedVersion: approvedJournal.version,
+    idempotencyKey: 'seed-finance-post-wip-journal',
+    postedAt: '2026-10-02T13:00:00.000Z',
+    explicitHumanConfirmation: true,
   }, audit);
 }
