@@ -120,7 +120,8 @@ export function App() {
           onConverted={(matterId) => navigate({ page: 'matter', matterId })}
         />
       ) : (
-        <MatterPage matterId={route.matterId} onBack={() => navigate({ page: 'dashboard' })} />
+        <MatterPage matterId={route.matterId} financeOnly={user.role === 'finance'}
+          onBack={() => navigate({ page: 'dashboard' })} />
       )}
     </AppShell>
   );
