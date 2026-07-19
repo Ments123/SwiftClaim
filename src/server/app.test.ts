@@ -453,6 +453,86 @@ describe('SwiftClaim API', () => {
     expect(download.statusCode).toBe(200);
     expect(download.rawPayload).toEqual(fileContent);
     expect(download.headers['content-disposition']).toContain('statement.txt');
+
+    const exactVersionDownload = await app.inject({
+      method: 'GET',
+      url: `/api/matters/${SEED_IDS.northstarMatter}/document-versions/${response.json().document.latestVersion.id}/download`,
+      headers: { cookie },
+    });
+    expect(exactVersionDownload.statusCode).toBe(200);
+    expect(exactVersionDownload.rawPayload).toEqual(fileContent);
+    expect(exactVersionDownload.headers['content-disposition']).toContain('statement.txt');
+  });
+
+  it('limits finance users to a safe matter shell and finance-linked exact evidence', async () => {
+    const avaCookie = await login(app);
+    const financeCookie = await login(app, 'finance@northstar.test');
+    const partnerCookie = await login(app, 'partner@northstar.test');
+    const fileContent = Buffer.from('reviewed client estimate');
+    const multipart = multipartDocument(
+      { title: 'Reviewed client estimate', category: 'Costs' },
+      { name: 'client-estimate.txt', type: 'text/plain', content: fileContent },
+    );
+    const upload = await app.inject({
+      method: 'POST',
+      url: `/api/matters/${SEED_IDS.northstarMatter}/documents`,
+      headers: { cookie: avaCookie, ...multipart.headers },
+      payload: multipart.payload,
+    });
+    expect(upload.statusCode).toBe(201);
+    const documentId = String(upload.json().document.id);
+    const versionId = String(upload.json().document.latestVersion.id);
+
+    const aggregate = await app.inject({
+      method: 'GET', url: `/api/matters/${SEED_IDS.northstarMatter}`,
+      headers: { cookie: financeCookie },
+    });
+    expect(aggregate.statusCode).toBe(200);
+    expect(aggregate.json()).toMatchObject({
+      matter: { description: '', externalSource: null, externalId: null, importBatchId: null },
+      parties: [], tasks: [], documents: [], timeline: [], audit: [],
+      permissions: { canWrite: false, canCreateMatter: false }, team: [],
+    });
+
+    const summary = await app.inject({
+      method: 'GET', url: `/api/matters/${SEED_IDS.northstarMatter}/summary`,
+      headers: { cookie: financeCookie },
+    });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json()).toMatchObject({ deadlines: [], nextActions: [], alerts: [] });
+    expect(summary.json().workflow).toMatchObject({ completedChecklistKeys: [], blockers: [] });
+
+    for (const url of [
+      `/api/matters/${SEED_IDS.northstarMatter}/documents/${documentId}/download`,
+      `/api/matters/${SEED_IDS.northstarMatter}/document-versions/${versionId}/download`,
+    ]) {
+      const hidden = await app.inject({ method: 'GET', url, headers: { cookie: financeCookie } });
+      expect(hidden.statusCode).toBe(404);
+      expect(hidden.json().error.code).toBe('NOT_FOUND');
+    }
+
+    const estimate = await app.inject({
+      method: 'POST', url: `/api/matters/${SEED_IDS.northstarMatter}/finance/estimates`,
+      headers: { cookie: partnerCookie },
+      payload: {
+        idempotencyKey: 'finance-linked-evidence-estimate', effectiveOn: '2026-07-13',
+        scope: 'Reviewed litigation costs through the next procedural phase.',
+        feesMinor: 100_000, disbursementsMinor: 20_000, vatMinor: 20_000,
+        overallLimitMinor: 140_000, currency: 'GBP', reviewOn: '2026-08-13',
+        sourceDocumentVersionId: versionId,
+        approvalNote: 'The client estimate and exact retained source were reviewed.',
+        explicitApproval: true,
+      },
+    });
+    expect(estimate.statusCode).toBe(201);
+
+    const exactEvidence = await app.inject({
+      method: 'GET',
+      url: `/api/matters/${SEED_IDS.northstarMatter}/document-versions/${versionId}/download`,
+      headers: { cookie: financeCookie },
+    });
+    expect(exactEvidence.statusCode).toBe(200);
+    expect(exactEvidence.rawPayload).toEqual(fileContent);
   });
 
   it('does not reveal an uploaded document across firms', async () => {
@@ -477,5 +557,13 @@ describe('SwiftClaim API', () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe('NOT_FOUND');
+
+    const exactVersionResponse = await app.inject({
+      method: 'GET',
+      url: `/api/matters/${SEED_IDS.northstarMatter}/document-versions/${upload.json().document.latestVersion.id}/download`,
+      headers: { cookie: southbankCookie },
+    });
+    expect(exactVersionResponse.statusCode).toBe(404);
+    expect(exactVersionResponse.json().error.code).toBe('NOT_FOUND');
   });
 });
