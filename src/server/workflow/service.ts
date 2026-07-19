@@ -145,6 +145,33 @@ export class WorkflowService {
         'The current workflow stage is not configured.',
       );
     }
+    if (user.role === 'finance') {
+      return {
+        matter: aggregate.matter,
+        workflow: {
+          id: workflow.id,
+          version: workflow.version,
+          definitionVersion: workflow.workflowVersion,
+          name: workflow.workflowName,
+          currentStageKey: workflow.currentStage.key,
+          currentStagePosition: workflow.currentStage.position,
+          stages: stageDefinitions.map((stage) => ({
+            ...stage,
+            state: stage.position < workflow.currentStage.position
+              ? ('completed' as const)
+              : stage.position === workflow.currentStage.position
+                ? ('current' as const)
+                : ('upcoming' as const),
+          })),
+          completedChecklistKeys: [],
+          blockers: [],
+        },
+        deadlines: [],
+        nextActions: [],
+        alerts: [],
+        permissions: { canWrite: false, canTransition: false, canOverrideWorkflow: false },
+      };
+    }
     const completedChecklist = new Set(
       this.workflowStore.listCompletedChecklistKeys(user.firmId, matterId),
     );
