@@ -29,6 +29,7 @@ This repository contains a real full-stack application, not a static prototype. 
 - versioned drafts, approval gates, explicit dispatch confirmation, provider-event projection, call identity/recording provenance and reviewable service assertions;
 - human-authored negotiation reviews, immutable client instructions, versioned authority, exact-term approval gates, settlement terms and evidence-backed obligations;
 - governed civil proceedings with independent issue authority, exact filings, per-recipient service, applications, sealed orders, atomic directions and hearings;
+- governed time and matter finance with provisional activity review, server timers, immutable effective rates, approved WIP, estimates and warnings, disbursement states, and balanced non-cash journals;
 - append-only audit records protected by database triggers;
 - ordered, transactional database migrations;
 - responsive desktop, tablet, and mobile interface;
@@ -191,7 +192,7 @@ All seeded users use the password `SwiftClaim!2026`.
 | Ava Morgan | `ava@northstar.test` | Solicitor; Leah intake pilot and assigned Northstar matter |
 | Marcus Reed | `partner@northstar.test` | Partner; all Northstar matters and matter creation |
 | Ben Foster | `ben@northstar.test` | Paralegal; assigned matters only |
-| Priya Shah | `finance@northstar.test` | Firm-wide read-only access |
+| Priya Shah | `finance@northstar.test` | Firm-wide finance projections and controls through a finance-only matter shell |
 | Lewis Grant | `lewis@southbank.test` | Separate Southbank firm tenant |
 
 Use Ava for both supported evaluation journeys:
@@ -273,6 +274,7 @@ The boundaries are deliberately portable:
 - `src/server/quantum/` owns exact money calculations, repair projections, schedules, valuations, offer segregation, readiness and its HTTP boundary;
 - `src/server/communications/` owns the communication ledger, drafts, approvals, dispatch projection, calls, service assertions and provider boundary;
 - `src/server/negotiation/` owns human advice, client instructions, exact action authority, settlement terms, obligations and readiness;
+- `src/server/finance/` owns activity-derived time, immutable rate snapshots, estimates, warnings, disbursement facts, balanced journals and safe finance projections;
 - `src/server/storage.ts` owns immutable bytes and hashes;
 - `src/server/migrations/` owns ordered schema evolution;
 - `src/server/app.ts` maps HTTP requests to those boundaries;
@@ -280,13 +282,13 @@ The boundaries are deliberately portable:
 
 SQLite and local storage are evaluation adapters. The same contracts can move to PostgreSQL and encrypted object storage without rewriting the browser application.
 
-Schema migration 6 adds the tenant-scoped repairs, work-event, loss, valuation, offer, Part 36 and command-receipt records. Migration 7 adds governed conversations, immutable entries and attachments, draft versions and approvals, dispatch/provider events, call sessions and service assertions. Migration 8 adds negotiation reviews, instructions, authority and action versions, append-only approvals and external acts, settlement terms and obligations, explicit workflow branches, tenant constraints, immutability guards and indexes.
+Schema migration 6 adds the tenant-scoped repairs, work-event, loss, valuation, offer, Part 36 and command-receipt records. Migration 7 adds governed conversations, immutable entries and attachments, draft versions and approvals, dispatch/provider events, call sessions and service assertions. Migration 8 adds negotiation reviews, instructions, authority and action versions, append-only approvals and external acts, settlement terms and obligations, explicit workflow branches, tenant constraints, immutability guards and indexes. Migration 12 adds the governed finance foundation, immutable rate/time/estimate/disbursement facts, balanced neutral-account journals, command receipts and integration outbox.
 
 ## Security model
 
 The server never accepts a firm identifier from the browser. It resolves the firm and user from a random session token stored in an HTTP-only, same-site cookie. Only the SHA-256 token hash is stored in the database.
 
-Administrative and partner roles can read and write every matter and enquiry in their firm. Solicitors and paralegals need assignment, ownership or explicit membership. Conflict decisions, intake outcomes, overrides and conversion have distinct capability checks. Finance and read-only roles can read firm matters but cannot access claimant intake or mutate records. Inaccessible matters, enquiries and child resources return the same generic `404`, including resources in another firm, to avoid existence disclosure.
+Administrative and partner roles can read and write every matter and enquiry in their firm. Solicitors and paralegals need assignment, ownership or explicit membership. Conflict decisions, intake outcomes, overrides and conversion have distinct capability checks. Read-only users can read firm matters without mutating them. Finance users receive firm-wide safe matter metadata and finance projections, but general parties, tasks, documents, chronology and audit payloads are removed; they can download only exact document versions already linked to a governed finance fact. Inaccessible matters, enquiries and child resources return the same generic `404`, including resources in another firm, to avoid existence disclosure.
 
 Every tenant-owned table carries `firm_id`. Composite foreign keys prevent a child record from crossing a firm boundary. Audit, document-version, notice, access, evidence, evidence-link, approved Letter, service, response, expert conflict, instruction, milestone, report, question, approved schedule, repair-event, valuation and offer-event rows have database triggers that reject updates and deletion. Mutable defect, working-letter, protocol-case, expert-engagement and draft schedule state uses optimistic versions while evidential changes are retained separately. Uploaded and generated names never become storage paths; files receive random storage keys and an SHA-256 digest.
 
