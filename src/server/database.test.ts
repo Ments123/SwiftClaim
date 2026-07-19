@@ -130,6 +130,14 @@ describe('canonical database', () => {
         'settlement_obligations',
         'settlement_obligation_events',
         'negotiation_command_receipts',
+        'finance_activity_suggestions',
+        'finance_rate_cards',
+        'finance_time_entries',
+        'finance_estimate_versions',
+        'finance_disbursements',
+        'finance_accounts',
+        'finance_journals',
+        'finance_journal_lines',
       ]),
     );
     expect(database.prepare('PRAGMA foreign_keys').get()).toEqual({
@@ -201,6 +209,11 @@ describe('canonical database', () => {
       {
         version: 11,
         name: 'governed disclosure and evidence',
+        checksumLength: 64,
+      },
+      {
+        version: 12,
+        name: 'governed finance foundation',
         checksumLength: 64,
       },
     ]);
