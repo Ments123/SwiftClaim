@@ -23,6 +23,7 @@ interface MatterSectionRailProps {
   activeSection: MatterSection;
   onSelect: (section: MatterSection) => void;
   counts?: Partial<Record<MatterSection, number>>;
+  financeOnly?: boolean;
 }
 
 const SECTION_ITEMS: ReadonlyArray<{
@@ -88,7 +89,7 @@ const SECTION_ITEMS: ReadonlyArray<{
     id: 'time_finance',
     label: 'Time & finance',
     icon: ClipboardList,
-    available: false,
+    available: true,
   },
   {
     id: 'chronology',
@@ -103,10 +104,14 @@ export function MatterSectionRail({
   activeSection,
   onSelect,
   counts = {},
+  financeOnly = false,
 }: MatterSectionRailProps) {
+  const items = financeOnly
+    ? SECTION_ITEMS.filter(({ id }) => id === 'overview' || id === 'time_finance')
+    : SECTION_ITEMS;
   return (
     <nav className="matter-section-rail" aria-label="Matter sections">
-      {SECTION_ITEMS.map((item) => {
+      {items.map((item) => {
         const Icon = item.icon;
         return (
           <button
