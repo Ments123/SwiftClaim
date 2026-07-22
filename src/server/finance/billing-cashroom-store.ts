@@ -58,6 +58,17 @@ export interface GeneratedBillFile extends GeneratedBillDocument {
   discard?: () => void;
 }
 
+export interface RetainedFinancialEvidenceInput {
+  idempotencyKey: string;
+  matterId: string;
+  title: string;
+  originalName: string;
+  mimeType: string;
+  storageKey: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
 export type GeneratedBillWriter = (document: GeneratedBillDocument) => GeneratedBillFile;
 
 export interface PrepareCreditNoteInput {
@@ -175,6 +186,133 @@ export class BillingCashroomStore {
 
   private requireCapability(user: SessionUser, capability: Capability): void {
     if (!hasCapability(user, capability)) throw new BillingCashroomStoreError('FORBIDDEN', 'The billing action is not permitted.');
+  }
+
+  retainStatementEvidence(user: SessionUser, input: RetainedFinancialEvidenceInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.record_bank_activity');
+    if (!this.canReadMatter(user, input.matterId)) throw new BillingCashroomStoreError('NOT_FOUND', 'The evidence matter was not found.');
+    const scope = `retain_statement_evidence:${input.sha256}`;
+    const replayInput = { ...input, storageKey: undefined };
+    const replay = this.replay<{ documentId: string; documentVersionId: string; sha256: string; storageKey: string }>(
+      user, input.matterId, scope, input.idempotencyKey, replayInput,
+    );
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      if (!/^[a-f0-9]{64}$/.test(input.sha256) || !input.storageKey || input.sizeBytes <= 0 ||
+        !Number.isSafeInteger(input.sizeBytes)) throw new BillingCashroomStoreError('INVALID_STATE', 'The retained evidence metadata is invalid.');
+      const documentId = randomUUID();
+      const documentVersionId = randomUUID();
+      const at = this.now().toISOString();
+      this.database.prepare(`INSERT INTO documents (
+        id,firm_id,matter_id,title,category,external_source,external_id,import_batch_id,created_by,created_at
+      ) VALUES (?,?,?,?,'Finance - Bank statements',NULL,NULL,NULL,?,?)`).run(
+        documentId, user.firmId, input.matterId, input.title, user.id, at,
+      );
+      this.database.prepare(`INSERT INTO document_versions (
+        id,firm_id,document_id,version,original_name,mime_type,size_bytes,sha256,storage_key,uploaded_by,created_at
+      ) VALUES (?,?,?,1,?,?,?,?,?,?,?)`).run(documentVersionId, user.firmId, documentId, input.originalName,
+        input.mimeType, input.sizeBytes, input.sha256, input.storageKey, user.id, at);
+      const response = { documentId, documentVersionId, sha256: input.sha256, storageKey: input.storageKey };
+      this.saveReplay(user, input.matterId, scope, documentVersionId, input.idempotencyKey, replayInput, response, at);
+      this.appendOperational(user, input.matterId, 'finance.statement_evidence_retained', documentVersionId,
+        'Bank statement evidence retained', input.idempotencyKey, at,
+        { documentId, documentVersionId, sha256: input.sha256, sizeBytes: input.sizeBytes }, audit,
+        'finance_statement_evidence');
+      return response;
+    });
+  }
+
+  getFinancialDocumentFile(
+    user: SessionUser,
+    input: {
+      kind: 'bill' | 'credit_note' | 'receipt' | 'payment' | 'statement' | 'reconciliation';
+      recordId: string;
+      documentVersionId: string;
+      matterId?: string;
+    },
+  ) {
+    if (input.kind === 'payment') {
+      if (!hasCapability(user, 'finance.prepare_client_payment') && !hasCapability(user, 'finance.approve_client_payment'))
+        throw new BillingCashroomStoreError('FORBIDDEN', 'The payment evidence is not permitted.');
+    } else this.requireCapability(user,
+      input.kind === 'statement' || input.kind === 'receipt' || input.kind === 'reconciliation'
+        ? 'finance.read_firm' : 'finance.read_matter');
+    const common = [input.documentVersionId, user.firmId] as const;
+    let granted = false;
+    if (input.kind === 'bill' && input.matterId) {
+      granted = this.canReadMatter(user, input.matterId) && Boolean(this.database.prepare(`SELECT 1 FROM finance_bill_documents
+        WHERE bill_id=? AND document_version_id=? AND firm_id=? AND matter_id=?`).get(
+        input.recordId, input.documentVersionId, user.firmId, input.matterId,
+      ));
+    } else if (input.kind === 'credit_note' && input.matterId) {
+      granted = this.canReadMatter(user, input.matterId) && Boolean(this.database.prepare(`SELECT 1 FROM finance_credit_note_documents
+        WHERE credit_note_id=? AND document_version_id=? AND firm_id=? AND matter_id=?`).get(
+        input.recordId, input.documentVersionId, user.firmId, input.matterId,
+      ));
+    } else if (input.kind === 'receipt') {
+      granted = Boolean(this.database.prepare(`SELECT 1 FROM finance_receipts
+        WHERE id=? AND evidence_document_version_id=? AND firm_id=?`).get(input.recordId, ...common));
+    } else if (input.kind === 'statement') {
+      granted = Boolean(this.database.prepare(`SELECT 1 FROM finance_bank_statement_batches
+        WHERE id=? AND evidence_document_version_id=? AND firm_id=?`).get(input.recordId, ...common));
+    } else if (input.kind === 'payment' && input.matterId) {
+      granted = this.canReadMatter(user, input.matterId) && Boolean(this.database.prepare(`SELECT 1 FROM finance_payment_requisitions p
+        WHERE p.id=? AND p.firm_id=? AND p.matter_id=? AND (p.beneficiary_evidence_document_version_id=? OR EXISTS (
+          SELECT 1 FROM finance_payment_events e WHERE e.payment_id=p.id AND e.firm_id=p.firm_id AND e.matter_id=p.matter_id
+          AND e.evidence_document_version_id=?))`).get(input.recordId, user.firmId, input.matterId,
+        input.documentVersionId, input.documentVersionId));
+    } else if (input.kind === 'reconciliation') {
+      granted = Boolean(this.database.prepare(`SELECT 1 FROM finance_reconciliation_items
+        WHERE reconciliation_id=? AND evidence_document_version_id=? AND firm_id=?`).get(input.recordId, ...common));
+    }
+    if (!granted) return null;
+    const row = this.database.prepare(`SELECT dv.original_name AS originalName,dv.mime_type AS mimeType,
+      dv.size_bytes AS sizeBytes,dv.sha256,dv.storage_key AS storageKey FROM document_versions dv
+      WHERE dv.id=? AND dv.firm_id=?`).get(input.documentVersionId, user.firmId) as Row | undefined;
+    return row ? { originalName: String(row.originalName), mimeType: String(row.mimeType),
+      sizeBytes: Number(row.sizeBytes), sha256: String(row.sha256), storageKey: String(row.storageKey) } : null;
+  }
+
+  exportRegister(user: SessionUser, kind: 'bills' | 'cashbook' | 'reconciliations'): string {
+    this.requireCapability(user, 'finance.export_accounts');
+    const escape = (value: unknown) => {
+      const raw = String(value ?? '');
+      const protectedValue = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+      return /[",\r\n]/.test(protectedValue) ? `"${protectedValue.replaceAll('"', '""')}"` : protectedValue;
+    };
+    if (kind === 'bills') {
+      const header = ['bill_reference','matter_id','client_party_id','due_on','net_minor','vat_minor','gross_minor','currency','status'];
+      const rows = this.database.prepare(`SELECT b.bill_reference AS billReference,b.matter_id AS matterId,
+        b.client_party_id AS clientPartyId,v.due_on AS dueOn,v.net_minor AS netMinor,v.vat_minor AS vatMinor,
+        v.gross_minor AS grossMinor,v.currency,(SELECT e.event_type FROM finance_bill_events e WHERE e.bill_id=b.id
+        AND e.firm_id=b.firm_id AND e.matter_id=b.matter_id ORDER BY e.sequence DESC LIMIT 1) AS status
+        FROM finance_bills b JOIN finance_bill_versions v ON v.id=(SELECT e.bill_version_id FROM finance_bill_events e
+        WHERE e.bill_id=b.id AND e.firm_id=b.firm_id AND e.matter_id=b.matter_id AND e.event_type='issued' LIMIT 1)
+        WHERE b.firm_id=? AND b.bill_reference IS NOT NULL ORDER BY b.bill_number`).all(user.firmId) as Row[];
+      return `${header.join(',')}\n${rows.map((row) => [row.billReference,row.matterId,row.clientPartyId,row.dueOn,row.netMinor,
+        row.vatMinor,row.grossMinor,row.currency,row.status].map(escape).join(',')).join('\n')}${rows.length ? '\n' : ''}`;
+    }
+    if (kind === 'cashbook') {
+      const header = ['accounting_date','journal_id','matter_id','source_kind','source_id','account_code','debit_minor','credit_minor','currency'];
+      const rows = this.database.prepare(`SELECT j.accounting_date AS accountingDate,j.id AS journalId,j.matter_id AS matterId,
+        j.source_kind AS sourceKind,j.source_id AS sourceId,a.code,l.debit_minor AS debitMinor,l.credit_minor AS creditMinor,l.currency
+        FROM finance_journals j JOIN finance_journal_lines l ON l.journal_id=j.id AND l.firm_id=j.firm_id AND l.matter_id=j.matter_id
+        JOIN finance_accounts a ON a.id=l.account_id AND a.firm_id=l.firm_id WHERE j.firm_id=? AND EXISTS (
+          SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id AND e.firm_id=j.firm_id AND e.matter_id=j.matter_id
+          AND e.event_type='posted') ORDER BY j.accounting_date,j.id,l.line_number`).all(user.firmId) as Row[];
+      return `${header.join(',')}\n${rows.map((row) => [row.accountingDate,row.journalId,row.matterId,row.sourceKind,row.sourceId,row.code,
+        row.debitMinor,row.creditMinor,row.currency].map(escape).join(',')).join('\n')}${rows.length ? '\n' : ''}`;
+    }
+    const header = ['reconciliation_id','bank_account_id','statement_closing_on','statement_closing_balance_minor','ledger_cleared_balance_minor','difference_minor','currency','status','next_review_due_on'];
+    const rows = this.database.prepare(`SELECT r.id,r.bank_account_id AS bankAccountId,r.statement_closing_on AS statementClosingOn,
+      r.statement_closing_balance_minor AS statementClosingBalanceMinor,r.ledger_cleared_balance_minor AS ledgerClearedBalanceMinor,
+      r.difference_minor AS differenceMinor,r.currency,CASE WHEN s.id IS NOT NULL THEN 'signed_off' WHEN EXISTS (
+        SELECT 1 FROM finance_reconciliation_events e WHERE e.reconciliation_id=r.id AND e.firm_id=r.firm_id AND e.event_type='completed'
+      ) THEN 'completed' ELSE 'prepared' END AS status,s.next_review_due_on AS nextReviewDueOn
+      FROM finance_reconciliations r LEFT JOIN finance_reconciliation_signoffs s ON s.reconciliation_id=r.id AND s.firm_id=r.firm_id
+      WHERE r.firm_id=? ORDER BY r.statement_closing_on,r.id`).all(user.firmId) as Row[];
+    return `${header.join(',')}\n${rows.map((row) => [row.id,row.bankAccountId,row.statementClosingOn,row.statementClosingBalanceMinor,
+      row.ledgerClearedBalanceMinor,row.differenceMinor,row.currency,row.status,row.nextReviewDueOn].map(escape).join(',')).join('\n')}${rows.length ? '\n' : ''}`;
   }
 
   private canReadMatter(user: SessionUser, matterId: string): boolean {
@@ -748,7 +886,9 @@ export class BillingCashroomStore {
     const scope = `issue_credit_note:${creditNoteId}`;
     const replay = this.replay<NonNullable<ReturnType<typeof this.getCreditNote>>>(user, matterId, scope, input.idempotencyKey, input);
     if (replay) return replay;
-    return transaction(this.database, () => {
+    let stagedFile: GeneratedBillFile | undefined;
+    try {
+      return transaction(this.database, () => {
       const credit = this.getCreditNote(user, matterId, creditNoteId);
       if (!credit) throw new BillingCashroomStoreError('NOT_FOUND', 'The credit note was not found.');
       if (credit.preparedBy === user.id) throw new BillingCashroomStoreError('INDEPENDENCE_REQUIRED', 'Credit-note issue requires an independent approver.');
@@ -774,6 +914,7 @@ export class BillingCashroomStore {
       const reference = `CN-${bill.billReference}-${String(Number(sequenceRow.count) + 1).padStart(3, '0')}`;
       const content = `<!doctype html><html lang="en"><meta charset="utf-8"><title>${escapeHtml(reference)}</title><body><h1>${escapeHtml(user.firmName)}</h1><h2>Credit note ${escapeHtml(reference)}</h2><p>Original bill: ${escapeHtml(String(bill.billReference))}</p><p>Reason: ${escapeHtml(credit.reason)}</p><p>Net credit: £${(credit.netMinor / 100).toFixed(2)}<br>VAT credit: £${(credit.vatMinor / 100).toFixed(2)}<br><strong>Total credit: £${(credit.grossMinor / 100).toFixed(2)}</strong></p></body></html>`;
       const generated = this.writeGeneratedBill({ billReference: reference, originalName: `${reference}.html`, mimeType: 'text/html', content });
+      stagedFile = generated;
       const bytes = new TextEncoder().encode(content);
       const expectedChecksum = createHash('sha256').update(bytes).digest('hex');
       if (generated.sha256 !== expectedChecksum || generated.sizeBytes !== bytes.byteLength || generated.content !== content) throw new BillingCashroomStoreError('INVALID_STATE', 'Generated credit-note storage returned invalid exact-file metadata.');
@@ -801,7 +942,11 @@ export class BillingCashroomStore {
       this.appendOperational(user, matterId, 'finance.credit_note_issued', creditNoteId, `Credit note ${reference} issued`,
         input.idempotencyKey, issuedAt, { billId: credit.billId, creditReference: reference, grossMinor: credit.grossMinor, currency: 'GBP' }, audit, 'finance_credit_note');
       return response;
-    });
+      });
+    } catch (error) {
+      stagedFile?.discard?.();
+      throw error;
+    }
   }
 
   private exactEvidence(firmId: string, versionId: string, matterId?: string): boolean {

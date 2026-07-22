@@ -35,6 +35,8 @@ import { disclosureRoutes } from './disclosure/routes.js';
 import { DisclosureService } from './disclosure/service.js';
 import { DisclosureStore } from './disclosure/store.js';
 import { financeRoutes } from './finance/routes.js';
+import { billingCashroomRoutes } from './finance/billing-cashroom-routes.js';
+import { BillingCashroomStore } from './finance/billing-cashroom-store.js';
 import { FinanceService } from './finance/service.js';
 import { FinanceStore } from './finance/store.js';
 import { IntakeConflictService } from './intake/conflicts.js';
@@ -71,6 +73,7 @@ import {
   MAX_UPLOAD_BYTES,
   openStoredFile,
   storeUploadedFile,
+  storeGeneratedFileSync,
   UploadTooLargeError,
   type StoredFile,
 } from './storage.js';
@@ -203,6 +206,11 @@ export async function buildApp(
   const pleadingsService = new PleadingsService(new PleadingsStore(database, now));
   const disclosureService = new DisclosureService(new DisclosureStore(database, now));
   const financeService = new FinanceService(new FinanceStore(database, now));
+  const billingCashroomStore = new BillingCashroomStore(database, now, (document) => {
+    const bytes = new TextEncoder().encode(document.content);
+    const stored = storeGeneratedFileSync(options.storagePath, bytes);
+    return { ...document, ...stored };
+  });
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -696,6 +704,13 @@ export async function buildApp(
 
   await app.register(financeRoutes, {
     service: financeService,
+    requireUser,
+    auditContext: (request) => ({ requestId: request.id, ipAddress: request.ip }),
+  });
+
+  await app.register(billingCashroomRoutes, {
+    store: billingCashroomStore,
+    storagePath: options.storagePath,
     requireUser,
     auditContext: (request) => ({ requestId: request.id, ipAddress: request.ip }),
   });
