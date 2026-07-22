@@ -5,6 +5,8 @@ import { EvaluationCommunicationProvider } from './communications/evaluation-pro
 import { CommunicationProviderRegistry } from './communications/provider.js';
 import { CommunicationService } from './communications/service.js';
 import { CommunicationStore } from './communications/store.js';
+import { ClosureService, ClosureServiceError } from './closure/service.js';
+import { ClosureStore } from './closure/store.js';
 import { DisclosureService } from './disclosure/service.js';
 import { DisclosureStore } from './disclosure/store.js';
 import { suggestTimeFromActivity } from './finance/activity.js';
@@ -92,6 +94,10 @@ export const SEED_IDS = {
   financeWipAccount: '93000000-0000-4000-8000-000000000001',
   financeWipOffsetAccount: '93000000-0000-4000-8000-000000000002',
   financeOpenPeriod: '93000000-0000-4000-8000-000000000003',
+  northstarClosureMatter: '30000000-0000-4000-8000-000000000090',
+  closureTask: '50000000-0000-4000-8000-000000000090',
+  closureReportDocument: '74000000-0000-4000-8000-000000000090',
+  closureReportVersion: '75000000-0000-4000-8000-000000000090',
 } as const;
 
 interface SeedDatabaseOptions {
@@ -3392,5 +3398,96 @@ export function seedBillingCashroomEvaluation(
   store.signoffReconciliation(partner, reconciliation.id, {
     expectedVersion: completed.version, idempotencyKey: 'seed-cashroom-signoff-reconciliation', signedOffAt: currentNow,
     note: 'Marcus independently signed the exact zero-difference reconciliation.', explicitHumanApproval: true,
+  }, audit);
+}
+
+export function seedMatterClosureEvaluation(database: DatabaseSync): void {
+  let currentNow = '2026-11-01T09:00:00.000Z';
+  const now = () => new Date(currentNow);
+  const solicitor: SessionUser = {
+    id: SEED_IDS.ava, firmId: SEED_IDS.northstarFirm, firmName: 'Northstar Legal',
+    email: 'ava@northstar.test', name: 'Ava Morgan', role: 'solicitor',
+  };
+  const partner: SessionUser = {
+    ...solicitor, id: SEED_IDS.partner, email: 'partner@northstar.test', name: 'Marcus Reed', role: 'partner',
+  };
+  const matterId = SEED_IDS.northstarClosureMatter;
+  const audit = { requestId: 'seed-matter-closure', ipAddress: '127.0.0.1' };
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.prepare(`INSERT OR IGNORE INTO matters
+      (id,firm_id,reference,title,client_name,matter_type,status,stage,risk_level,owner_user_id,opened_at,description,created_by,created_at,updated_at)
+      VALUES (?,?,'NCL-2026-CLOSE','Maya Clarke closure evaluation','Maya Clarke','Housing conditions claim','open','Settlement','low',?,
+      '2026-02-01','Synthetic governed closure and reopening journey.',?,'2026-02-01T09:00:00.000Z','2026-02-01T09:00:00.000Z')`)
+      .run(matterId, solicitor.firmId, solicitor.id, solicitor.id);
+    database.prepare(`INSERT OR IGNORE INTO matter_members (firm_id,matter_id,user_id,access_level,added_at)
+      VALUES (?,?,?,'write',?), (?,?,?,'write',?)`).run(
+      solicitor.firmId, matterId, solicitor.id, currentNow,
+      solicitor.firmId, matterId, partner.id, currentNow,
+    );
+    database.prepare(`INSERT OR IGNORE INTO documents
+      (id,firm_id,matter_id,title,category,created_by,created_at) VALUES (?,?,?,'Final client report','Closure',?,?)`)
+      .run(SEED_IDS.closureReportDocument, solicitor.firmId, matterId, solicitor.id, currentNow);
+    database.prepare(`INSERT OR IGNORE INTO document_versions
+      (id,firm_id,document_id,version,original_name,mime_type,size_bytes,sha256,storage_key,uploaded_by,created_at)
+      VALUES (?,?,?,1,'final-client-report.pdf','application/pdf',20,?,'evaluation/closure/final-client-report.pdf',?,?)`)
+      .run(SEED_IDS.closureReportVersion, solicitor.firmId, SEED_IDS.closureReportDocument,
+        createHash('sha256').update('synthetic final client report').digest('hex'), solicitor.id, currentNow);
+    database.prepare(`INSERT OR IGNORE INTO tasks
+      (id,firm_id,matter_id,title,notes,due_at,priority,status,assignee_user_id,created_by,created_at,updated_at)
+      VALUES (?,?,?,'Return archived paper bundle','Client requested return after office retrieval.','2026-11-15T12:00:00.000Z',
+      'normal','open',?,?,?,?)`).run(SEED_IDS.closureTask, solicitor.firmId, matterId, solicitor.id, solicitor.id, currentNow, currentNow);
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+
+  const service = new ClosureService(new ClosureStore(database, now));
+  const base = {
+    outcome: 'Repairs completed, damages paid and the client received final advice.',
+    closureReason: 'The substantive claim is complete and the remaining paper return is separately controlled.',
+    lessons: 'Confirm original-paper return preferences before drafting the final client report.',
+    finalClientReportStatus: 'sent' as const,
+    finalClientReportDocumentVersionId: SEED_IDS.closureReportVersion,
+    documentsPosition: 'mixed' as const,
+    documentsNote: 'Electronic records are retained and the original paper bundle remains due for return.',
+    retentionBasis: 'Northstar evaluation policy retains the closed housing file for six years.',
+    retentionUntil: '2032-11-01',
+    undertakingsConfirmedClear: true as const,
+    complaintsConfirmedClear: true as const,
+    attestationNote: 'Ava reviewed the exact matter record and confirmed no unrecorded undertaking or complaint remains.',
+    explicitHumanAuthority: true as const,
+  };
+  try {
+    service.prepare(solicitor, matterId, { ...base, transfers: [], idempotencyKey: 'seed-closure-blocked-attempt' }, audit);
+  } catch (error) {
+    if (!(error instanceof ClosureServiceError) || error.code !== 'NOT_READY') throw error;
+  }
+  currentNow = '2026-11-01T09:10:00.000Z';
+  const prepared = service.prepare(solicitor, matterId, { ...base, idempotencyKey: 'seed-closure-prepare', transfers: [{
+    blockerKey: `task:${SEED_IDS.closureTask}`, ownerUserId: solicitor.id, dueOn: '2026-11-15',
+    reason: 'Ava remains personally responsible for returning the original paper bundle after closure.',
+  }] }, audit);
+  currentNow = '2026-11-01T09:20:00.000Z';
+  service.approve(partner, matterId, prepared.review!.id, {
+    note: 'Marcus independently checked the exact readiness snapshot, final report and retained obligation.',
+    explicitHumanAuthority: true, idempotencyKey: 'seed-closure-approve',
+  }, audit);
+  currentNow = '2026-11-01T09:30:00.000Z';
+  service.close(partner, matterId, prepared.review!.id, {
+    note: 'Marcus authorised closure after the final transactional readiness recheck.',
+    explicitHumanAuthority: true, idempotencyKey: 'seed-closure-close',
+  }, audit);
+  currentNow = '2026-11-01T09:40:00.000Z';
+  service.applyLegalHold(partner, matterId, {
+    reason: 'Preserve the complete file while a related regulator enquiry remains open.',
+    explicitHumanAuthority: true, idempotencyKey: 'seed-closure-legal-hold',
+  }, audit);
+  currentNow = '2026-11-01T09:50:00.000Z';
+  service.reopen(partner, matterId, {
+    reason: 'A newly received landlord compliance issue requires renewed legal work and client advice.',
+    newOwnerUserId: solicitor.id, explicitHumanAuthority: true, idempotencyKey: 'seed-closure-reopen',
   }, audit);
 }

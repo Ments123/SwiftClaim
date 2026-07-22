@@ -28,7 +28,7 @@ const sql = String.raw`
   ) STRICT;
   CREATE TABLE matter_closure_events (
     id TEXT PRIMARY KEY, firm_id TEXT NOT NULL, matter_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence > 0),
-    event_type TEXT NOT NULL CHECK(event_type IN ('prepared','approved','rejected','closed','reopened')),
+    event_type TEXT NOT NULL CHECK(event_type IN ('blocked','prepared','approved','rejected','closed','reopened')),
     review_id TEXT, reason TEXT NOT NULL, responsible_owner_user_id TEXT,
     explicit_human_authority INTEGER NOT NULL CHECK(explicit_human_authority=1),
     recorded_by TEXT NOT NULL, recorded_at TEXT NOT NULL,

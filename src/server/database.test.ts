@@ -221,6 +221,11 @@ describe('canonical database', () => {
         name: 'governed billing and cashroom',
         checksumLength: 64,
       },
+      {
+        version: 14,
+        name: 'matter closure and reopening',
+        checksumLength: 64,
+      },
     ]);
   });
 

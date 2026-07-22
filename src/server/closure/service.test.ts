@@ -77,13 +77,103 @@ describe('ClosureService', () => {
   afterEach(() => database.close());
 
   it('derives blockers from authoritative open tasks and rejects preparation', () => {
+    const taskId = crypto.randomUUID();
     database.prepare(`INSERT INTO tasks (id,firm_id,matter_id,title,notes,due_at,priority,status,assignee_user_id,created_by,created_at,updated_at)
       VALUES (?,?,?,?,?,'2026-08-01T12:00:00.000Z','normal','open',?,?,?,?)`).run(
-      crypto.randomUUID(), SEED_IDS.northstarFirm, MATTER, 'Return original papers', '', SEED_IDS.ava, SEED_IDS.ava, NOW.toISOString(), NOW.toISOString(),
+      taskId, SEED_IDS.northstarFirm, MATTER, 'Return original papers', '', SEED_IDS.ava, SEED_IDS.ava, NOW.toISOString(), NOW.toISOString(),
     );
-    expect(() => service.prepare(solicitor, MATTER, prepareInput(), AUDIT)).toThrowError(
+    const command = prepareInput();
+    expect(() => service.prepare(solicitor, MATTER, command, AUDIT)).toThrowError(
       expect.objectContaining<Partial<ClosureServiceError>>({ code: 'NOT_READY' }),
     );
+    expect(database.prepare(`SELECT COUNT(*) AS count FROM matter_closure_events WHERE matter_id=? AND event_type='blocked'`).get(MATTER))
+      .toEqual({ count: 1 });
+    expect(database.prepare(`SELECT COUNT(*) AS count FROM audit_events WHERE matter_id=? AND action='matter.closure_blocked'`).get(MATTER))
+      .toEqual({ count: 1 });
+    expect(database.prepare(`SELECT entity_type AS entityType FROM audit_events
+      WHERE matter_id=? AND action='matter.closure_blocked'`).get(MATTER)).toEqual({ entityType: 'matter_closure_event' });
+
+    database.prepare(`UPDATE tasks SET status='completed' WHERE id=? AND firm_id=?`).run(taskId, solicitor.firmId);
+    expect(() => service.prepare(solicitor, MATTER, command, AUDIT)).toThrowError(
+      expect.objectContaining<Partial<ClosureServiceError>>({ code: 'NOT_READY' }),
+    );
+    expect(database.prepare(`SELECT COUNT(*) AS count FROM matter_closure_events WHERE matter_id=? AND event_type='blocked'`).get(MATTER))
+      .toEqual({ count: 1 });
+    expect(service.prepare(solicitor, MATTER, prepareInput('closure-prepare-after-block'), AUDIT).status).toBe('prepared');
+  });
+
+  it('rejects expired retention and post-closure obligation dates', () => {
+    expect(() => service.prepare(solicitor, MATTER, {
+      ...prepareInput('closure-expired-retention'), retentionUntil: '2026-07-21',
+    }, AUDIT)).toThrowError(expect.objectContaining<Partial<ClosureServiceError>>({ code: 'INVALID_STATE' }));
+
+    const taskId = crypto.randomUUID();
+    database.prepare(`INSERT INTO tasks (id,firm_id,matter_id,title,notes,due_at,priority,status,assignee_user_id,created_by,created_at,updated_at)
+      VALUES (?,?,?,?,?,'2026-08-01T12:00:00.000Z','normal','open',?,?,?,?)`).run(
+      taskId, SEED_IDS.northstarFirm, MATTER, 'Return original papers', '', SEED_IDS.ava, SEED_IDS.ava, NOW.toISOString(), NOW.toISOString(),
+    );
+    expect(() => service.prepare(solicitor, MATTER, {
+      ...prepareInput('closure-expired-obligation'), transfers: [{
+        blockerKey: `task:${taskId}`, ownerUserId: SEED_IDS.ava, dueOn: '2026-07-21',
+        reason: 'Ava remains responsible for returning the original papers after closure.',
+      }],
+    }, AUDIT)).toThrowError(expect.objectContaining<Partial<ClosureServiceError>>({ code: 'NOT_READY' }));
+  });
+
+  it('does not report office debt that an issued credit note fully extinguished', () => {
+    const clientId = crypto.randomUUID();
+    const seriesId = crypto.randomUUID();
+    const billId = crypto.randomUUID();
+    const billVersionId = crypto.randomUUID();
+    const billLineId = crypto.randomUUID();
+    const creditId = crypto.randomUUID();
+    database.prepare(`INSERT INTO parties
+      (id,firm_id,matter_id,kind,name,organisation,email,phone,address,created_by,created_at)
+      VALUES (?, ?, ?, 'client', 'Test Client', '', '', '', '', ?, ?)`).run(
+      clientId, solicitor.firmId, MATTER, solicitor.id, NOW.toISOString(),
+    );
+    database.prepare(`INSERT INTO finance_bill_series
+      (id,firm_id,prefix,year_pattern,next_number,padding,active,created_by,created_at)
+      VALUES (?,?,'CLOSE-','YYYY-',2,6,1,?,?)`).run(seriesId, solicitor.firmId, solicitor.id, NOW.toISOString());
+    database.prepare(`INSERT INTO finance_bills
+      (id,firm_id,matter_id,client_party_id,series_id,bill_number,bill_reference,currency,due_on,prepared_by,prepared_at)
+      VALUES (?,?,?,?,?,1,'CLOSE-2026-000001','GBP','2026-08-21',?,?)`).run(
+      billId, solicitor.firmId, MATTER, clientId, seriesId, solicitor.id, NOW.toISOString(),
+    );
+    database.prepare(`INSERT INTO finance_bill_versions
+      (id,firm_id,matter_id,bill_id,version_number,due_on,net_minor,vat_minor,gross_minor,currency,note,prepared_by,created_at)
+      VALUES (?,?,?,?,1,'2026-08-21',10000,2000,12000,'GBP','Issued test bill',?,?)`).run(
+      billVersionId, solicitor.firmId, MATTER, billId, solicitor.id, NOW.toISOString(),
+    );
+    database.prepare(`INSERT INTO finance_bill_lines
+      (id,firm_id,matter_id,bill_id,bill_version_id,line_number,source_kind,source_id,narrative,net_minor,vat_treatment,
+       vat_rate_id,rate_numerator,rate_denominator,vat_minor,gross_minor,rounding_snapshot_json,currency)
+      VALUES (?,?,?,?,?,1,'time',?,'Test work',10000,'standard',NULL,20,100,2000,12000,'{}','GBP')`).run(
+      billLineId, solicitor.firmId, MATTER, billId, billVersionId, crypto.randomUUID(),
+    );
+    database.prepare(`INSERT INTO finance_bill_events
+      (id,firm_id,matter_id,bill_id,sequence,event_type,bill_version_id,note,occurred_at,recorded_by,recorded_at)
+      VALUES (?,?,?,?,1,'issued',?,'Issued',?,?,?)`).run(
+      crypto.randomUUID(), solicitor.firmId, MATTER, billId, billVersionId, NOW.toISOString(), partner.id, NOW.toISOString(),
+    );
+    database.prepare(`INSERT INTO finance_credit_notes
+      (id,firm_id,matter_id,bill_id,credit_reference,reason,currency,prepared_by,prepared_at)
+      VALUES (?,?,?,?,?,'Full agreed credit','GBP',?,?)`).run(
+      creditId, solicitor.firmId, MATTER, billId, 'CN-CLOSE-2026-000001-001', solicitor.id, NOW.toISOString(),
+    );
+    database.prepare(`INSERT INTO finance_credit_note_lines
+      (id,firm_id,matter_id,credit_note_id,bill_line_id,line_number,net_minor,vat_minor,gross_minor,currency)
+      VALUES (?,?,?,?,?,1,10000,2000,12000,'GBP')`).run(
+      crypto.randomUUID(), solicitor.firmId, MATTER, creditId, billLineId,
+    );
+    database.prepare(`INSERT INTO finance_credit_note_events
+      (id,firm_id,matter_id,credit_note_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+      VALUES (?,?,?,?,1,'issued','Issued full credit',?,?,?)`).run(
+      crypto.randomUUID(), solicitor.firmId, MATTER, creditId, NOW.toISOString(), partner.id, NOW.toISOString(),
+    );
+
+    expect(new ClosureStore(database, () => NOW).getSnapshot(solicitor, MATTER).blockers)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ key: `office-balance:${billId}` })]));
   });
 
   it('requires independent approval and rechecks stale financial/legal facts before close', () => {
@@ -105,6 +195,16 @@ describe('ClosureService', () => {
     expect(() => service.close(admin, MATTER, prepared.review!.id, {
       note: 'Close matter.', explicitHumanAuthority: true, idempotencyKey: 'closure-close-0001',
     }, AUDIT)).toThrowError(expect.objectContaining<Partial<ClosureServiceError>>({ code: 'STALE_REVIEW' }));
+  });
+
+  it('requires explicit human authority at every decision service boundary', () => {
+    const prepared = service.prepare(solicitor, MATTER, prepareInput('closure-human-boundary'), AUDIT);
+    expect(() => service.approve(partner, MATTER, prepared.review!.id, {
+      note: 'Attempted decision without explicit human authority.', explicitHumanAuthority: false,
+      idempotencyKey: 'closure-no-human-approval',
+    } as unknown as Parameters<ClosureService['approve']>[3], AUDIT)).toThrowError(
+      expect.objectContaining<Partial<ClosureServiceError>>({ code: 'FORBIDDEN' }),
+    );
   });
 
   it('closes only the independently approved exact review and replays safely', () => {
@@ -142,5 +242,19 @@ describe('ClosureService', () => {
     expect(database.prepare(`SELECT event_type AS type FROM matter_closure_events WHERE matter_id=? ORDER BY sequence`).all(MATTER))
       .toEqual([{ type: 'prepared' }, { type: 'approved' }, { type: 'closed' }, { type: 'reopened' }]);
     expect(database.prepare('SELECT COUNT(*) AS count FROM matter_active_periods WHERE matter_id=?').get(MATTER)).toEqual({ count: 1 });
+    expect(database.prepare(`SELECT entity_type AS entityType FROM audit_events
+      WHERE matter_id=? AND action='matter.reopened'`).get(MATTER)).toEqual({ entityType: 'matter_closure_event' });
+  });
+
+  it('records legal-hold audit evidence against the exact legal hold', () => {
+    service.applyLegalHold(partner, MATTER, {
+      reason: 'Preserve the complete matter while the regulator enquiry remains active.',
+      explicitHumanAuthority: true, idempotencyKey: 'closure-apply-hold-audit',
+    }, AUDIT);
+    expect(database.prepare(`SELECT entity_type AS entityType, entity_id AS entityId FROM audit_events
+      WHERE matter_id=? AND action='matter.legal_hold_applied'`).get(MATTER)).toEqual({
+      entityType: 'legal_hold',
+      entityId: expect.any(String),
+    });
   });
 });

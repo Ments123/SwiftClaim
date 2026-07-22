@@ -27,6 +27,12 @@ export class ClosureService {
     if (!hasCapability(user, capability)) throw new ClosureServiceError('FORBIDDEN', 'The closure action is not permitted.');
   }
 
+  private requireHuman(input: { explicitHumanAuthority: true }) {
+    if (input.explicitHumanAuthority !== true) {
+      throw new ClosureServiceError('FORBIDDEN', 'Explicit human authority is required.');
+    }
+  }
+
   getWorkspace(user: SessionUser, matterId: string) {
     this.require(user, 'closure.read');
     try {
@@ -39,11 +45,22 @@ export class ClosureService {
 
   prepare(user: SessionUser, matterId: string, input: PrepareClosureInput, audit: AuditContext) {
     this.require(user, 'closure.prepare');
-    if (!input.explicitHumanAuthority) throw new ClosureServiceError('FORBIDDEN', 'Explicit human authority is required.');
+    this.requireHuman(input);
     try {
+      if (this.store.isBlockedAttemptReplay(user, matterId, input)) {
+        throw new ClosureServiceError('NOT_READY', 'Critical or uncontrolled closure obligations remain.');
+      }
       const snapshot = this.store.getSnapshot(user, matterId);
-      const result = classifyClosureReadiness({ blockers: snapshot.blockers, transfers: input.transfers });
-      if (!result.closable) throw new ClosureServiceError('NOT_READY', 'Critical or uncontrolled closure obligations remain.');
+      const result = classifyClosureReadiness({
+        blockers: snapshot.blockers,
+        transfers: input.transfers,
+        asOfDate: snapshot.calculatedAt.slice(0, 10),
+      });
+      if (!result.closable) {
+        this.store.recordBlockedAttempt(user, matterId, input,
+          [...result.unresolved.map(({ key }) => key), ...result.invalidTransfers], audit);
+        throw new ClosureServiceError('NOT_READY', 'Critical or uncontrolled closure obligations remain.');
+      }
       return this.store.prepare(user, matterId, input, snapshot.hash, audit);
     } catch (error) {
       if (error instanceof ClosureServiceError) throw error;
@@ -53,26 +70,31 @@ export class ClosureService {
 
   approve(user: SessionUser, matterId: string, reviewId: string, input: ClosureDecisionInput, audit: AuditContext) {
     this.require(user, 'closure.approve');
+    this.requireHuman(input);
     try { return this.store.approve(user, matterId, reviewId, input, audit); } catch (error) { rethrow(error); }
   }
 
   close(user: SessionUser, matterId: string, reviewId: string, input: ClosureDecisionInput, audit: AuditContext) {
     this.require(user, 'closure.approve');
+    this.requireHuman(input);
     try { return this.store.close(user, matterId, reviewId, input, audit); } catch (error) { rethrow(error); }
   }
 
   reopen(user: SessionUser, matterId: string, input: ReopenMatterInput, audit: AuditContext) {
     this.require(user, 'closure.reopen');
+    this.requireHuman(input);
     try { return this.store.reopen(user, matterId, input, audit); } catch (error) { rethrow(error); }
   }
 
   applyLegalHold(user: SessionUser, matterId: string, input: LegalHoldInput, audit: AuditContext) {
     this.require(user, 'closure.manage_hold');
+    this.requireHuman(input);
     try { return this.store.applyLegalHold(user, matterId, input, audit); } catch (error) { rethrow(error); }
   }
 
   releaseLegalHold(user: SessionUser, matterId: string, holdId: string, input: LegalHoldInput, audit: AuditContext) {
     this.require(user, 'closure.manage_hold');
+    this.requireHuman(input);
     try { return this.store.releaseLegalHold(user, matterId, holdId, input, audit); } catch (error) { rethrow(error); }
   }
 }

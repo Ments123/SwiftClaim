@@ -34,6 +34,18 @@ function canonical(value: unknown): string {
 
 const hash = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 
+function safeOutstanding(gross: number, paid: number, credited: number): number {
+  if (![gross, paid, credited].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+    throw new ClosureStoreError('INVALID_STATE', 'Matter financial totals exceed safe accounting limits.');
+  }
+  const afterPayment = gross - paid;
+  const outstanding = afterPayment - credited;
+  if (!Number.isSafeInteger(afterPayment) || !Number.isSafeInteger(outstanding) || outstanding < 0) {
+    throw new ClosureStoreError('INVALID_STATE', 'Matter financial totals are inconsistent.');
+  }
+  return outstanding;
+}
+
 function transaction<T>(database: DatabaseSync, operation: () => T): T {
   database.exec('BEGIN IMMEDIATE');
   try {
@@ -120,15 +132,20 @@ export class ClosureStore {
         WHERE bv.firm_id=? AND bv.matter_id=? AND bv.bill_id=? AND be.event_type IN ('issued','delivered')
         ORDER BY bv.version_number DESC LIMIT 1`).get(user.firmId, matterId, billId) as Row | undefined;
       if (!bill) continue;
-      const paid = this.database.prepare(`SELECT
+      const money = this.database.prepare(`SELECT
         COALESCE((SELECT SUM(amount_minor) FROM finance_receipt_allocations a WHERE a.firm_id=? AND a.matter_id=? AND a.bill_id=?
           AND a.designation='office' AND a.reverses_allocation_id IS NULL AND NOT EXISTS
           (SELECT 1 FROM finance_receipt_allocations r WHERE r.firm_id=a.firm_id AND r.reverses_allocation_id=a.id)),0)+
         COALESCE((SELECT SUM(t.amount_minor) FROM finance_client_office_transfers t WHERE t.firm_id=? AND t.matter_id=? AND t.bill_id=?
           AND EXISTS (SELECT 1 FROM finance_transfer_events e WHERE e.firm_id=t.firm_id AND e.matter_id=t.matter_id
-            AND e.transfer_id=t.id AND e.event_type='posted')),0) AS paid`)
-        .get(user.firmId, matterId, billId, user.firmId, matterId, billId) as Row;
-      const outstanding = Number(bill.gross) - Number(paid.paid);
+            AND e.transfer_id=t.id AND e.event_type='posted')),0) AS paid,
+        COALESCE((SELECT SUM(cnl.gross_minor) FROM finance_credit_note_lines cnl
+          JOIN finance_credit_notes cn ON cn.id=cnl.credit_note_id AND cn.firm_id=cnl.firm_id AND cn.matter_id=cnl.matter_id
+          WHERE cn.firm_id=? AND cn.matter_id=? AND cn.bill_id=? AND EXISTS
+            (SELECT 1 FROM finance_credit_note_events cne WHERE cne.firm_id=cn.firm_id AND cne.matter_id=cn.matter_id
+              AND cne.credit_note_id=cn.id AND cne.event_type='issued')),0) AS credited`)
+        .get(user.firmId, matterId, billId, user.firmId, matterId, billId, user.firmId, matterId, billId) as Row;
+      const outstanding = safeOutstanding(Number(bill.gross), Number(money.paid), Number(money.credited));
       if (outstanding !== 0) blockers.push({ key: `office-balance:${billId}`, category: 'office_balance',
         label: `Issued bill has ${outstanding} minor units outstanding.`, severity: 'critical', transferable: false, sourceId: billId });
     }
@@ -152,7 +169,7 @@ export class ClosureStore {
       VALUES (?,?,?,?,?,?,?,?,?)`).run(randomUUID(), user.firmId, matterId, type, key, hash(input), canonical(result), user.id, at);
   }
 
-  private appendEvent(user: SessionUser, matterId: string, type: 'prepared'|'approved'|'closed'|'reopened', reviewId: string | null,
+  private appendEvent(user: SessionUser, matterId: string, type: 'blocked'|'prepared'|'approved'|'closed'|'reopened', reviewId: string | null,
     reason: string, ownerId: string | null, at: string) {
     const id = randomUUID();
     const sequence = Number((this.database.prepare('SELECT COUNT(*)+1 AS next FROM matter_closure_events WHERE firm_id=? AND matter_id=?')
@@ -163,12 +180,30 @@ export class ClosureStore {
     return id;
   }
 
-  private operational(user: SessionUser, matterId: string, action: string, entityId: string, at: string, audit: AuditContext) {
-    appendTimeline(this.database, { firmId: user.firmId, matterId, type: action, title: action === 'matter.closed' ? 'Matter closed' : 'Matter closure reviewed', actorUserId: user.id, occurredAt: at, metadata: { entityType: 'matter_closure_review', entityId } });
-    appendAudit(this.database, { firmId: user.firmId, matterId, userId: user.id, action, entityType: 'matter_closure_review', entityId,
-      after: { reviewId: entityId }, requestId: audit.requestId, ipAddress: audit.ipAddress, createdAt: at });
+  recordBlockedAttempt(user: SessionUser, matterId: string, input: PrepareClosureInput, blockerKeys: string[], audit: AuditContext) {
+    this.requireMatter(user, matterId);
+    if (this.replay(user, matterId, 'prepare_blocked', input.idempotencyKey, input)) return;
+    transaction(this.database, () => {
+      const at = this.now().toISOString();
+      const eventId = this.appendEvent(user, matterId, 'blocked', null,
+        `Closure preparation blocked by ${blockerKeys.length} unresolved or invalid control${blockerKeys.length === 1 ? '' : 's'}.`, null, at);
+      this.operational(user, matterId, 'matter.closure_blocked', 'matter_closure_event', eventId, at, audit);
+      this.saveReceipt(user, matterId, 'prepare_blocked', input.idempotencyKey, input, { eventId, blockerKeys }, at);
+    });
+  }
+
+  isBlockedAttemptReplay(user: SessionUser, matterId: string, input: PrepareClosureInput): boolean {
+    this.requireMatter(user, matterId);
+    return this.replay(user, matterId, 'prepare_blocked', input.idempotencyKey, input);
+  }
+
+  private operational(user: SessionUser, matterId: string, action: string,
+    entityType: 'matter_closure_review' | 'matter_closure_event' | 'legal_hold', entityId: string, at: string, audit: AuditContext) {
+    appendTimeline(this.database, { firmId: user.firmId, matterId, type: action, title: action === 'matter.closed' ? 'Matter closed' : 'Matter closure reviewed', actorUserId: user.id, occurredAt: at, metadata: { entityType, entityId } });
+    appendAudit(this.database, { firmId: user.firmId, matterId, userId: user.id, action, entityType, entityId,
+      after: { entityType, entityId }, requestId: audit.requestId, ipAddress: audit.ipAddress, createdAt: at });
     this.database.prepare(`INSERT INTO integration_outbox (id,firm_id,matter_id,topic,payload_json,status,attempts,available_at,created_at,deduplication_key)
-      VALUES (?,?,?,?,?,'pending',0,?,?,?)`).run(randomUUID(), user.firmId, matterId, action, canonical({ matterId, reviewId: entityId }), at, at,
+      VALUES (?,?,?,?,?,'pending',0,?,?,?)`).run(randomUUID(), user.firmId, matterId, action, canonical({ matterId, entityType, entityId }), at, at,
       `closure:${user.firmId}:${matterId}:${action}:${entityId}`);
   }
 
@@ -184,6 +219,9 @@ export class ClosureStore {
         WHERE dv.id=? AND dv.firm_id=? AND d.matter_id=?`).get(input.finalClientReportDocumentVersionId, user.firmId, matterId))
         throw new ClosureStoreError('INVALID_LINK', 'The exact final client report version was not found.');
       const at = this.now().toISOString();
+      if (input.retentionUntil <= at.slice(0, 10)) {
+        throw new ClosureStoreError('INVALID_STATE', 'The retention date must be after closure preparation.');
+      }
       const reviewId = randomUUID();
       const sequence = Number((this.database.prepare('SELECT COUNT(*)+1 AS next FROM matter_closure_reviews WHERE firm_id=? AND matter_id=?')
         .get(user.firmId, matterId) as Row).next);
@@ -210,7 +248,7 @@ export class ClosureStore {
           transfer.reason, transfer.ownerUserId, transfer.dueOn, user.id, at);
       }
       this.appendEvent(user, matterId, 'prepared', reviewId, input.closureReason, null, at);
-      this.operational(user, matterId, 'matter.closure_prepared', reviewId, at, audit);
+      this.operational(user, matterId, 'matter.closure_prepared', 'matter_closure_review', reviewId, at, audit);
       this.saveReceipt(user, matterId, 'prepare', input.idempotencyKey, input, { reviewId }, at);
       return this.getWorkspace(user, matterId);
     });
@@ -229,7 +267,7 @@ export class ClosureStore {
         .get(user.firmId, matterId, reviewId)) throw new ClosureStoreError('INVALID_STATE', 'The closure review has already been decided.');
       const at = this.now().toISOString();
       this.appendEvent(user, matterId, 'approved', reviewId, input.note, null, at);
-      this.operational(user, matterId, 'matter.closure_approved', reviewId, at, audit);
+      this.operational(user, matterId, 'matter.closure_approved', 'matter_closure_review', reviewId, at, audit);
       this.saveReceipt(user, matterId, 'approve', input.idempotencyKey, { reviewId, input }, { reviewId }, at);
       return this.getWorkspace(user, matterId);
     });
@@ -249,6 +287,13 @@ export class ClosureStore {
       if (this.getSnapshot(user, matterId).hash !== String(review.snapshotHash)) throw new ClosureStoreError('STALE_REVIEW', 'The closure facts changed after approval.');
       if (String(matter.status) === 'closed' || String(matter.status) === 'archived') throw new ClosureStoreError('INVALID_STATE', 'The matter is already closed.');
       const at = this.now().toISOString();
+      if (String(review.retentionUntil) <= at.slice(0, 10)) {
+        throw new ClosureStoreError('STALE_REVIEW', 'The approved retention date has expired; prepare a fresh closure review.');
+      }
+      if (this.database.prepare(`SELECT 1 FROM post_closure_obligations WHERE firm_id=? AND matter_id=? AND review_id=?
+        AND status='open' AND due_on<=? LIMIT 1`).get(user.firmId, matterId, reviewId, at.slice(0, 10))) {
+        throw new ClosureStoreError('STALE_REVIEW', 'A retained post-closure obligation is already due; prepare a fresh closure review.');
+      }
       const eventId = this.appendEvent(user, matterId, 'closed', reviewId, input.note, null, at);
       const ordinal = Number((this.database.prepare('SELECT COUNT(*)+1 AS next FROM matter_active_periods WHERE firm_id=? AND matter_id=?')
         .get(user.firmId, matterId) as Row).next);
@@ -263,7 +308,7 @@ export class ClosureStore {
         VALUES (?,?,?,?,?,?,?,0,?,?)`).run(randomUUID(), user.firmId, matterId, reviewId, review.retentionBasis,
         review.retentionUntil, review.retentionUntil, user.id, at);
       this.database.prepare(`UPDATE matters SET status='closed',stage='Closed',updated_at=? WHERE id=? AND firm_id=?`).run(at, matterId, user.firmId);
-      this.operational(user, matterId, 'matter.closed', reviewId, at, audit);
+      this.operational(user, matterId, 'matter.closed', 'matter_closure_review', reviewId, at, audit);
       this.saveReceipt(user, matterId, 'close', input.idempotencyKey, { reviewId, input }, { reviewId, eventId }, at);
       return this.getWorkspace(user, matterId);
     });
@@ -282,7 +327,7 @@ export class ClosureStore {
       const eventId = this.appendEvent(user, matterId, 'reopened', null, input.reason, input.newOwnerUserId, at);
       this.database.prepare(`UPDATE matters SET status='open',stage='Reopened',owner_user_id=?,updated_at=? WHERE id=? AND firm_id=?`)
         .run(input.newOwnerUserId, at, matterId, user.firmId);
-      this.operational(user, matterId, 'matter.reopened', eventId, at, audit);
+      this.operational(user, matterId, 'matter.reopened', 'matter_closure_event', eventId, at, audit);
       this.saveReceipt(user, matterId, 'reopen', input.idempotencyKey, input, { eventId }, at);
       return this.getWorkspace(user, matterId);
     });
@@ -299,7 +344,7 @@ export class ClosureStore {
       this.database.prepare(`INSERT INTO legal_hold_events
         (id,firm_id,matter_id,legal_hold_id,sequence,event_type,reason,explicit_human_authority,recorded_by,recorded_at)
         VALUES (?,?,?,?,1,'applied',?,1,?,?)`).run(randomUUID(), user.firmId, matterId, holdId, input.reason, user.id, at);
-      this.operational(user, matterId, 'matter.legal_hold_applied', holdId, at, audit);
+      this.operational(user, matterId, 'matter.legal_hold_applied', 'legal_hold', holdId, at, audit);
       this.saveReceipt(user, matterId, 'apply_hold', input.idempotencyKey, input, { holdId }, at);
       return this.getWorkspace(user, matterId);
     });
@@ -318,7 +363,7 @@ export class ClosureStore {
       this.database.prepare(`INSERT INTO legal_hold_events
         (id,firm_id,matter_id,legal_hold_id,sequence,event_type,reason,explicit_human_authority,recorded_by,recorded_at)
         VALUES (?,?,?,?,?,'released',?,1,?,?)`).run(randomUUID(), user.firmId, matterId, holdId, Number(latest.sequence) + 1, input.reason, user.id, at);
-      this.operational(user, matterId, 'matter.legal_hold_released', holdId, at, audit);
+      this.operational(user, matterId, 'matter.legal_hold_released', 'legal_hold', holdId, at, audit);
       this.saveReceipt(user, matterId, 'release_hold', input.idempotencyKey, { holdId, input }, { holdId }, at);
       return this.getWorkspace(user, matterId);
     });
