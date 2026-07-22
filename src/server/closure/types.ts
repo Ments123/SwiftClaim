@@ -55,3 +55,16 @@ export interface ClosureDecisionInput {
   explicitHumanAuthority: true;
   idempotencyKey: string;
 }
+
+export interface ReopenMatterInput {
+  reason: string;
+  newOwnerUserId: string;
+  explicitHumanAuthority: true;
+  idempotencyKey: string;
+}
+
+export interface LegalHoldInput {
+  reason: string;
+  explicitHumanAuthority: true;
+  idempotencyKey: string;
+}

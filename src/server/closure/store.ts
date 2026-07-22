@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import { canReadAllFirmMatters, type SessionUser } from '../policy.js';
 import { appendAudit, appendTimeline, type AuditContext } from '../store.js';
-import type { ClosureBlocker, ClosureDecisionInput, PrepareClosureInput } from './types.js';
+import type { ClosureBlocker, ClosureDecisionInput, LegalHoldInput, PrepareClosureInput, ReopenMatterInput } from './types.js';
 
 type Row = Record<string, string | number | null>;
 
@@ -269,6 +269,61 @@ export class ClosureStore {
     });
   }
 
+  reopen(user: SessionUser, matterId: string, input: ReopenMatterInput, audit: AuditContext) {
+    this.requireMatter(user, matterId);
+    if (this.replay(user, matterId, 'reopen', input.idempotencyKey, input)) return this.getWorkspace(user, matterId);
+    return transaction(this.database, () => {
+      const matter = this.requireMatter(user, matterId);
+      if (String(matter.status) !== 'closed' && String(matter.status) !== 'archived')
+        throw new ClosureStoreError('INVALID_STATE', 'Only a closed or archived matter can be reopened.');
+      if (!this.database.prepare('SELECT 1 FROM users WHERE id=? AND firm_id=? AND active=1')
+        .get(input.newOwnerUserId, user.firmId)) throw new ClosureStoreError('INVALID_LINK', 'The new responsible owner was not found.');
+      const at = this.now().toISOString();
+      const eventId = this.appendEvent(user, matterId, 'reopened', null, input.reason, input.newOwnerUserId, at);
+      this.database.prepare(`UPDATE matters SET status='open',stage='Reopened',owner_user_id=?,updated_at=? WHERE id=? AND firm_id=?`)
+        .run(input.newOwnerUserId, at, matterId, user.firmId);
+      this.operational(user, matterId, 'matter.reopened', eventId, at, audit);
+      this.saveReceipt(user, matterId, 'reopen', input.idempotencyKey, input, { eventId }, at);
+      return this.getWorkspace(user, matterId);
+    });
+  }
+
+  applyLegalHold(user: SessionUser, matterId: string, input: LegalHoldInput, audit: AuditContext) {
+    this.requireMatter(user, matterId);
+    if (this.replay(user, matterId, 'apply_hold', input.idempotencyKey, input)) return this.getWorkspace(user, matterId);
+    return transaction(this.database, () => {
+      const at = this.now().toISOString();
+      const holdId = randomUUID();
+      this.database.prepare(`INSERT INTO legal_holds (id,firm_id,matter_id,reason,created_by,created_at) VALUES (?,?,?,?,?,?)`)
+        .run(holdId, user.firmId, matterId, input.reason, user.id, at);
+      this.database.prepare(`INSERT INTO legal_hold_events
+        (id,firm_id,matter_id,legal_hold_id,sequence,event_type,reason,explicit_human_authority,recorded_by,recorded_at)
+        VALUES (?,?,?,?,1,'applied',?,1,?,?)`).run(randomUUID(), user.firmId, matterId, holdId, input.reason, user.id, at);
+      this.operational(user, matterId, 'matter.legal_hold_applied', holdId, at, audit);
+      this.saveReceipt(user, matterId, 'apply_hold', input.idempotencyKey, input, { holdId }, at);
+      return this.getWorkspace(user, matterId);
+    });
+  }
+
+  releaseLegalHold(user: SessionUser, matterId: string, holdId: string, input: LegalHoldInput, audit: AuditContext) {
+    this.requireMatter(user, matterId);
+    if (this.replay(user, matterId, 'release_hold', input.idempotencyKey, { holdId, input })) return this.getWorkspace(user, matterId);
+    return transaction(this.database, () => {
+      const hold = this.database.prepare(`SELECT 1 FROM legal_holds WHERE id=? AND firm_id=? AND matter_id=?`).get(holdId, user.firmId, matterId);
+      if (!hold) throw new ClosureStoreError('NOT_FOUND', 'The legal hold was not found.');
+      const latest = this.database.prepare(`SELECT event_type AS type,sequence FROM legal_hold_events WHERE legal_hold_id=? AND firm_id=? AND matter_id=?
+        ORDER BY sequence DESC LIMIT 1`).get(holdId, user.firmId, matterId) as Row;
+      if (latest.type !== 'applied') throw new ClosureStoreError('INVALID_STATE', 'The legal hold is not active.');
+      const at = this.now().toISOString();
+      this.database.prepare(`INSERT INTO legal_hold_events
+        (id,firm_id,matter_id,legal_hold_id,sequence,event_type,reason,explicit_human_authority,recorded_by,recorded_at)
+        VALUES (?,?,?,?,?,'released',?,1,?,?)`).run(randomUUID(), user.firmId, matterId, holdId, Number(latest.sequence) + 1, input.reason, user.id, at);
+      this.operational(user, matterId, 'matter.legal_hold_released', holdId, at, audit);
+      this.saveReceipt(user, matterId, 'release_hold', input.idempotencyKey, { holdId, input }, { holdId }, at);
+      return this.getWorkspace(user, matterId);
+    });
+  }
+
   getWorkspace(user: SessionUser, matterId: string) {
     const matter = this.requireMatter(user, matterId);
     const review = this.database.prepare(`SELECT id,sequence,snapshot_hash AS snapshotHash,outcome,closure_reason AS closureReason,
@@ -293,6 +348,7 @@ export class ClosureStore {
     const activeHold = holds.some((hold) => hold.status === 'applied');
     const latestEvent = events.at(-1);
     const status = String(matter.status) === 'closed' || String(matter.status) === 'archived' ? 'closed'
+      : latestEvent?.eventType === 'reopened' ? 'active'
       : latestEvent?.eventType === 'approved' ? 'approved' : review ? 'prepared' : 'active';
     const mappedReview = review ? {
       id: String(review.id), sequence: Number(review.sequence), snapshotHash: String(review.snapshotHash),

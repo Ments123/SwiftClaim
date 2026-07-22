@@ -2,7 +2,7 @@ import { hasCapability, type Capability, type SessionUser } from '../policy.js';
 import type { AuditContext } from '../store.js';
 import { classifyClosureReadiness } from './readiness.js';
 import { ClosureStore, ClosureStoreError } from './store.js';
-import type { ClosureDecisionInput, PrepareClosureInput } from './types.js';
+import type { ClosureDecisionInput, LegalHoldInput, PrepareClosureInput, ReopenMatterInput } from './types.js';
 
 export type ClosureServiceErrorCode =
   | 'NOT_FOUND' | 'FORBIDDEN' | 'NOT_READY' | 'CONFLICT' | 'INVALID_STATE'
@@ -59,5 +59,20 @@ export class ClosureService {
   close(user: SessionUser, matterId: string, reviewId: string, input: ClosureDecisionInput, audit: AuditContext) {
     this.require(user, 'closure.approve');
     try { return this.store.close(user, matterId, reviewId, input, audit); } catch (error) { rethrow(error); }
+  }
+
+  reopen(user: SessionUser, matterId: string, input: ReopenMatterInput, audit: AuditContext) {
+    this.require(user, 'closure.reopen');
+    try { return this.store.reopen(user, matterId, input, audit); } catch (error) { rethrow(error); }
+  }
+
+  applyLegalHold(user: SessionUser, matterId: string, input: LegalHoldInput, audit: AuditContext) {
+    this.require(user, 'closure.manage_hold');
+    try { return this.store.applyLegalHold(user, matterId, input, audit); } catch (error) { rethrow(error); }
+  }
+
+  releaseLegalHold(user: SessionUser, matterId: string, holdId: string, input: LegalHoldInput, audit: AuditContext) {
+    this.require(user, 'closure.manage_hold');
+    try { return this.store.releaseLegalHold(user, matterId, holdId, input, audit); } catch (error) { rethrow(error); }
   }
 }

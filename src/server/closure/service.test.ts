@@ -121,4 +121,26 @@ describe('ClosureService', () => {
     expect(database.prepare('SELECT status FROM matters WHERE id=?').get(MATTER)).toEqual({ status: 'closed' });
     expect(database.prepare('SELECT COUNT(*) AS count FROM matter_closure_events WHERE matter_id=? AND event_type=\'closed\'').get(MATTER)).toEqual({ count: 1 });
   });
+
+  it('reopens with a reason and new responsible owner without rewriting closure history', () => {
+    const prepared = service.prepare(solicitor, MATTER, prepareInput('closure-prepare-reopen'), AUDIT);
+    service.approve(partner, MATTER, prepared.review!.id, {
+      note: 'Independent closure approval recorded.', explicitHumanAuthority: true, idempotencyKey: 'closure-approve-reopen',
+    }, AUDIT);
+    service.close(partner, MATTER, prepared.review!.id, {
+      note: 'Matter closed after checks.', explicitHumanAuthority: true, idempotencyKey: 'closure-close-reopen',
+    }, AUDIT);
+    const reopened = service.reopen(partner, MATTER, {
+      reason: 'The landlord has failed to perform a newly discovered settlement term.',
+      newOwnerUserId: SEED_IDS.ava,
+      explicitHumanAuthority: true,
+      idempotencyKey: 'closure-reopen-0001',
+    }, AUDIT);
+    expect(reopened.status).toBe('active');
+    expect(database.prepare('SELECT status,owner_user_id AS owner FROM matters WHERE id=?').get(MATTER))
+      .toEqual({ status: 'open', owner: SEED_IDS.ava });
+    expect(database.prepare(`SELECT event_type AS type FROM matter_closure_events WHERE matter_id=? ORDER BY sequence`).all(MATTER))
+      .toEqual([{ type: 'prepared' }, { type: 'approved' }, { type: 'closed' }, { type: 'reopened' }]);
+    expect(database.prepare('SELECT COUNT(*) AS count FROM matter_active_periods WHERE matter_id=?').get(MATTER)).toEqual({ count: 1 });
+  });
 });

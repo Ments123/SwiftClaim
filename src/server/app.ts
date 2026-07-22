@@ -12,6 +12,7 @@ import Fastify, {
   type FastifyServerOptions,
 } from 'fastify';
 import { ZodError } from 'zod';
+import { assertMatterMutable, MatterReadOnlyError } from './closure/mutation-guard.js';
 
 import {
   createMatterSchema,
@@ -315,6 +316,22 @@ export async function buildApp(
     }
     return aggregate;
   }
+
+  app.addHook('preHandler', async (request) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
+    if (!request.url.startsWith('/api/matters/') || request.url.includes('/closure')) return;
+    const user = currentUser(request);
+    if (!user) return;
+    const params = request.params as { id?: string; matterId?: string };
+    const matterId = params.id ?? params.matterId;
+    if (!matterId) return;
+    try {
+      assertMatterMutable(database, user.firmId, matterId);
+    } catch (error) {
+      if (error instanceof MatterReadOnlyError) throw new HttpError(409, 'MATTER_CLOSED', error.message);
+      throw error;
+    }
+  });
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) {
