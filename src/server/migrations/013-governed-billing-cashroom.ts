@@ -89,7 +89,8 @@ const sql = String.raw`
   ) STRICT;
   CREATE TABLE finance_bill_documents (
     id TEXT PRIMARY KEY, firm_id TEXT NOT NULL, matter_id TEXT NOT NULL, bill_id TEXT NOT NULL,
-    bill_version_id TEXT NOT NULL, document_version_id TEXT NOT NULL, sha256 TEXT NOT NULL CHECK(length(sha256)=64), created_at TEXT NOT NULL,
+    bill_version_id TEXT NOT NULL, document_version_id TEXT NOT NULL, tax_point TEXT NOT NULL,
+    sha256 TEXT NOT NULL CHECK(length(sha256)=64), created_at TEXT NOT NULL,
     FOREIGN KEY (bill_id,firm_id,matter_id) REFERENCES finance_bills(id,firm_id,matter_id),
     FOREIGN KEY (bill_version_id,firm_id,matter_id) REFERENCES finance_bill_versions(id,firm_id,matter_id),
     FOREIGN KEY (document_version_id,firm_id) REFERENCES document_versions(id,firm_id),
@@ -97,10 +98,10 @@ const sql = String.raw`
   ) STRICT;
   CREATE TABLE finance_credit_notes (
     id TEXT PRIMARY KEY, firm_id TEXT NOT NULL, matter_id TEXT NOT NULL, bill_id TEXT NOT NULL,
-    reason TEXT NOT NULL, currency TEXT NOT NULL CHECK(currency='GBP'), prepared_by TEXT NOT NULL, prepared_at TEXT NOT NULL,
+    credit_reference TEXT, reason TEXT NOT NULL, currency TEXT NOT NULL CHECK(currency='GBP'), prepared_by TEXT NOT NULL, prepared_at TEXT NOT NULL,
     FOREIGN KEY (bill_id,firm_id,matter_id) REFERENCES finance_bills(id,firm_id,matter_id),
     FOREIGN KEY (prepared_by,firm_id) REFERENCES users(id,firm_id),
-    UNIQUE(id,firm_id), UNIQUE(id,firm_id,matter_id)
+    UNIQUE(firm_id,credit_reference), UNIQUE(id,firm_id), UNIQUE(id,firm_id,matter_id)
   ) STRICT;
   CREATE TABLE finance_credit_note_lines (
     id TEXT PRIMARY KEY, firm_id TEXT NOT NULL, matter_id TEXT NOT NULL, credit_note_id TEXT NOT NULL,
@@ -120,6 +121,13 @@ const sql = String.raw`
     FOREIGN KEY (credit_note_id,firm_id,matter_id) REFERENCES finance_credit_notes(id,firm_id,matter_id),
     FOREIGN KEY (recorded_by,firm_id) REFERENCES users(id,firm_id),
     UNIQUE(firm_id,matter_id,credit_note_id,sequence), UNIQUE(id,firm_id), UNIQUE(id,firm_id,matter_id)
+  ) STRICT;
+  CREATE TABLE finance_credit_note_documents (
+    id TEXT PRIMARY KEY, firm_id TEXT NOT NULL, matter_id TEXT NOT NULL, credit_note_id TEXT NOT NULL,
+    document_version_id TEXT NOT NULL, sha256 TEXT NOT NULL CHECK(length(sha256)=64), created_at TEXT NOT NULL,
+    FOREIGN KEY (credit_note_id,firm_id,matter_id) REFERENCES finance_credit_notes(id,firm_id,matter_id),
+    FOREIGN KEY (document_version_id,firm_id) REFERENCES document_versions(id,firm_id),
+    UNIQUE(firm_id,matter_id,credit_note_id), UNIQUE(id,firm_id), UNIQUE(id,firm_id,matter_id)
   ) STRICT;
 
   CREATE TABLE finance_bank_accounts (
@@ -322,6 +330,14 @@ const sql = String.raw`
   CREATE TRIGGER finance_credit_note_lines_no_delete BEFORE DELETE ON finance_credit_note_lines BEGIN SELECT RAISE(ABORT,'finance credit note lines are immutable'); END;
   CREATE TRIGGER finance_credit_note_events_no_update BEFORE UPDATE ON finance_credit_note_events BEGIN SELECT RAISE(ABORT,'finance credit note events are append-only'); END;
   CREATE TRIGGER finance_credit_note_events_no_delete BEFORE DELETE ON finance_credit_note_events BEGIN SELECT RAISE(ABORT,'finance credit note events are append-only'); END;
+  CREATE TRIGGER finance_credit_notes_issue_once BEFORE UPDATE ON finance_credit_notes
+    WHEN OLD.credit_reference IS NOT NULL OR NEW.credit_reference IS NULL
+      OR OLD.id <> NEW.id OR OLD.firm_id <> NEW.firm_id OR OLD.matter_id <> NEW.matter_id OR OLD.bill_id <> NEW.bill_id
+      OR OLD.reason <> NEW.reason OR OLD.currency <> NEW.currency OR OLD.prepared_by <> NEW.prepared_by OR OLD.prepared_at <> NEW.prepared_at
+    BEGIN SELECT RAISE(ABORT,'finance credit notes only permit one atomic reference assignment'); END;
+  CREATE TRIGGER finance_credit_notes_no_delete BEFORE DELETE ON finance_credit_notes BEGIN SELECT RAISE(ABORT,'finance credit notes cannot be deleted'); END;
+  CREATE TRIGGER finance_credit_note_documents_no_update BEFORE UPDATE ON finance_credit_note_documents BEGIN SELECT RAISE(ABORT,'finance credit note documents are immutable'); END;
+  CREATE TRIGGER finance_credit_note_documents_no_delete BEFORE DELETE ON finance_credit_note_documents BEGIN SELECT RAISE(ABORT,'finance credit note documents are immutable'); END;
   CREATE TRIGGER finance_statement_batches_no_update BEFORE UPDATE ON finance_bank_statement_batches BEGIN SELECT RAISE(ABORT,'finance statement batches are immutable'); END;
   CREATE TRIGGER finance_statement_batches_no_delete BEFORE DELETE ON finance_bank_statement_batches BEGIN SELECT RAISE(ABORT,'finance statement batches are immutable'); END;
   CREATE TRIGGER finance_statement_lines_no_update BEFORE UPDATE ON finance_bank_statement_lines BEGIN SELECT RAISE(ABORT,'finance statement lines are immutable'); END;
