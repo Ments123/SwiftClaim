@@ -25,10 +25,57 @@ describe('runMigrations', () => {
       { version: 10, name: 'governed pleadings and response control' },
       { version: 11, name: 'governed disclosure and evidence' },
       { version: 12, name: 'governed finance foundation' },
+      { version: 13, name: 'governed billing and cashroom' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates tenant-safe immutable billing and cashroom infrastructure', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-21T12:00:00.000Z');
+    const tableNames = (database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
+      .map(({ name }) => name);
+    expect(tableNames).toEqual(expect.arrayContaining([
+      'finance_vat_profiles', 'finance_vat_rates', 'finance_bill_series',
+      'finance_bills', 'finance_bill_versions', 'finance_bill_lines', 'finance_bill_events',
+      'finance_bill_source_allocations', 'finance_bill_documents',
+      'finance_credit_notes', 'finance_credit_note_lines', 'finance_credit_note_events',
+      'finance_bank_accounts', 'finance_bank_statement_batches', 'finance_bank_statement_lines',
+      'finance_receipts', 'finance_receipt_events', 'finance_receipt_allocations',
+      'finance_payment_requisitions', 'finance_payment_events',
+      'finance_client_office_transfers', 'finance_transfer_events',
+      'finance_reconciliations', 'finance_reconciliation_items',
+      'finance_reconciliation_events', 'finance_reconciliation_signoffs',
+      'finance_exceptions', 'finance_export_manifests',
+    ]));
+
+    const triggerNames = (database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'finance_%'").all() as Array<{ name: string }>)
+      .map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'finance_bill_lines_no_update', 'finance_bill_lines_no_delete',
+      'finance_bill_events_no_update', 'finance_bill_events_no_delete',
+      'finance_statement_lines_no_update', 'finance_statement_lines_no_delete',
+      'finance_receipt_allocations_no_update', 'finance_receipt_allocations_no_delete',
+      'finance_reconciliation_signoffs_no_update', 'finance_reconciliation_signoffs_no_delete',
+    ]));
+
+    const billSeriesSql = String((database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='finance_bill_series'").get() as { sql: string }).sql);
+    expect(billSeriesSql).toMatch(/next_number.*CHECK\(next_number > 0/s);
+    const billSql = String((database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='finance_bills'").get() as { sql: string }).sql);
+    expect(billSql).toMatch(/UNIQUE\(firm_id,series_id,bill_number\)/);
+    expect(billSql).toMatch(/FOREIGN KEY \(client_party_id,firm_id,matter_id\)/);
+    const statementBatchSql = String((database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='finance_bank_statement_batches'").get() as { sql: string }).sql);
+    expect(statementBatchSql).toMatch(/UNIQUE\(firm_id,bank_account_id,raw_checksum\)/);
+
+    for (const eventTable of [
+      'finance_bill_events', 'finance_credit_note_events', 'finance_receipt_events',
+      'finance_payment_events', 'finance_transfer_events', 'finance_reconciliation_events',
+    ]) {
+      const columns = (database.prepare(`PRAGMA table_info(${eventTable})`).all() as Array<{ name: string }>).map(({ name }) => name);
+      expect(columns, `${eventTable} needs deterministic causal ordering`).toContain('sequence');
+    }
   });
 
   it('creates tenant-safe immutable finance and journal infrastructure', () => {
