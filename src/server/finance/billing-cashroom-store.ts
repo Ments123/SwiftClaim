@@ -188,6 +188,78 @@ export class BillingCashroomStore {
     if (!hasCapability(user, capability)) throw new BillingCashroomStoreError('FORBIDDEN', 'The billing action is not permitted.');
   }
 
+  getMatterBillingWorkspace(user: SessionUser, matterId: string) {
+    this.requireMatter(user, matterId, 'finance.read_matter');
+    const clients = (this.database.prepare(`SELECT id,COALESCE(NULLIF(name,''),organisation) AS name
+      FROM parties WHERE firm_id=? AND matter_id=? AND kind='client' ORDER BY name,id`)
+      .all(user.firmId, matterId) as Row[]).map((row) => ({ id: String(row.id), name: String(row.name) }));
+    const billIds = (this.database.prepare(`SELECT id FROM finance_bills WHERE firm_id=? AND matter_id=? ORDER BY prepared_at DESC,id`)
+      .all(user.firmId, matterId) as Row[]).map((row) => String(row.id));
+    const paymentIds = (this.database.prepare(`SELECT id FROM finance_payment_requisitions WHERE firm_id=? AND matter_id=? ORDER BY prepared_at DESC,id`)
+      .all(user.firmId, matterId) as Row[]).map((row) => String(row.id));
+    const transferIds = (this.database.prepare(`SELECT id FROM finance_client_office_transfers WHERE firm_id=? AND matter_id=? ORDER BY prepared_at DESC,id`)
+      .all(user.firmId, matterId) as Row[]).map((row) => String(row.id));
+    const timeSources = (this.database.prepare(`SELECT t.id,'time' AS kind,t.narrative,a.charge_minor AS netMinor,NULL AS vatMinor
+      FROM finance_time_entries t JOIN finance_time_approvals a ON a.time_entry_id=t.id AND a.firm_id=t.firm_id AND a.matter_id=t.matter_id
+      WHERE t.firm_id=? AND t.matter_id=? AND t.chargeable=1
+      AND (SELECT e.event_type FROM finance_time_entry_events e WHERE e.time_entry_id=t.id AND e.firm_id=t.firm_id
+        AND e.matter_id=t.matter_id ORDER BY e.sequence DESC LIMIT 1)='approved'
+      AND NOT EXISTS (SELECT 1 FROM finance_bill_source_allocations s WHERE s.firm_id=t.firm_id AND s.matter_id=t.matter_id
+        AND s.source_kind='time' AND s.source_id=t.id) ORDER BY t.work_date,t.id`)
+      .all(user.firmId, matterId) as Row[]);
+    const disbursementSources = (this.database.prepare(`SELECT d.id,'disbursement' AS kind,d.description AS narrative,
+      d.net_minor AS netMinor,d.vat_minor AS vatMinor FROM finance_disbursements d WHERE d.firm_id=? AND d.matter_id=?
+      AND (SELECT e.event_type FROM finance_disbursement_events e WHERE e.disbursement_id=d.id AND e.firm_id=d.firm_id
+        AND e.matter_id=d.matter_id ORDER BY e.sequence DESC LIMIT 1) IN ('incurred','paid_external')
+      AND NOT EXISTS (SELECT 1 FROM finance_bill_source_allocations s WHERE s.firm_id=d.firm_id AND s.matter_id=d.matter_id
+        AND s.source_kind='disbursement' AND s.source_id=d.id) ORDER BY d.invoice_date,d.id`)
+      .all(user.firmId, matterId) as Row[]);
+    const eligibleSources = [...timeSources, ...disbursementSources].map((row) => ({
+      id: String(row.id), kind: row.kind as 'time' | 'disbursement', narrative: String(row.narrative),
+      netMinor: Number(row.netMinor), vatMinor: row.vatMinor === null ? null : Number(row.vatMinor),
+    }));
+    const exceptions = (this.database.prepare(`SELECT id,exception_kind AS kind,severity,safe_summary AS summary,
+      amount_minor AS amountMinor,raised_at AS raisedAt FROM finance_exceptions WHERE firm_id=? AND matter_id=?
+      ORDER BY raised_at DESC,id`).all(user.firmId, matterId) as Row[]).map((row) => ({
+      id: String(row.id), kind: String(row.kind), severity: String(row.severity), summary: String(row.summary),
+      amountMinor: row.amountMinor === null ? null : Number(row.amountMinor), raisedAt: String(row.raisedAt),
+    }));
+    const historyQueries = [
+      [`SELECT id,'bill' AS kind,bill_id AS recordId,event_type AS status,occurred_at AS occurredAt,note AS summary
+        FROM finance_bill_events WHERE firm_id=? AND matter_id=?`, 'bill'],
+      [`SELECT id,'payment' AS kind,payment_id AS recordId,event_type AS status,occurred_at AS occurredAt,note AS summary
+        FROM finance_payment_events WHERE firm_id=? AND matter_id=?`, 'payment'],
+      [`SELECT id,'transfer' AS kind,transfer_id AS recordId,event_type AS status,occurred_at AS occurredAt,note AS summary
+        FROM finance_transfer_events WHERE firm_id=? AND matter_id=?`, 'transfer'],
+    ] as const;
+    const history = historyQueries.flatMap(([sql]) => this.database.prepare(sql).all(user.firmId, matterId) as Row[])
+      .map((row) => ({ id: String(row.id), kind: String(row.kind), recordId: String(row.recordId),
+        status: String(row.status), occurredAt: String(row.occurredAt), summary: String(row.summary) }))
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id));
+    return {
+      matterId, actingUserId: user.id,
+      permissions: {
+        canPrepareBill: hasCapability(user, 'finance.prepare_bill'),
+        canApproveBill: hasCapability(user, 'finance.approve_bill'),
+        canIssueBill: hasCapability(user, 'finance.issue_bill'),
+        canPrepareTransfer: hasCapability(user, 'finance.prepare_client_payment'),
+        canApproveTransfer: hasCapability(user, 'finance.approve_client_payment'),
+        canPostTransfer: hasCapability(user, 'finance.post_cashroom'),
+      },
+      clients, eligibleSources,
+      bills: billIds.map((id) => this.getBill(user, matterId, id)!),
+      money: clients.map((client) => ({ clientPartyId: client.id, ...this.getMatterMoney(user, matterId, client.id) })),
+      payments: paymentIds.map((id) => {
+        const payment = this.getClientPayment(user, matterId, id)!;
+        return { id: payment.id, clientPartyId: payment.clientPartyId, amountMinor: payment.amountMinor,
+          purpose: payment.purpose, preparedBy: payment.preparedBy, preparedAt: payment.preparedAt,
+          currency: payment.currency, version: payment.version, status: payment.status, events: payment.events };
+      }),
+      transfers: transferIds.map((id) => this.getClientOfficeTransfer(user, matterId, id)!),
+      exceptions, history,
+    };
+  }
+
   retainStatementEvidence(user: SessionUser, input: RetainedFinancialEvidenceInput, audit: AuditContext) {
     this.requireCapability(user, 'finance.record_bank_activity');
     if (!this.canReadMatter(user, input.matterId)) throw new BillingCashroomStoreError('NOT_FOUND', 'The evidence matter was not found.');

@@ -4693,6 +4693,26 @@ a {
 .finance-dialog-summary { padding: 11px; border: 1px solid #cbd9eb; border-radius: 9px; display: grid; gap: 4px; background: #f7faff; }
 .finance-dialog-summary strong { font-size: .72rem; }.finance-dialog-summary small { color: var(--muted); font-size: .6rem; line-height: 1.45; }
 .checkbox-field { min-height: 40px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .67rem; }.checkbox-field input { width: auto; min-height: auto; }
+.matter-finance-area { display: grid; gap: 10px; }
+.matter-finance-switcher { width: fit-content; padding: 4px; border: 1px solid var(--line); border-radius: 10px; display: flex; gap: 3px; background: #f4f7fa; }
+.matter-finance-switcher button { min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font: inherit; font-size: .64rem; font-weight: 800; cursor: pointer; }
+.matter-finance-switcher button.is-active { color: var(--blue-700); background: #fff; box-shadow: 0 1px 4px rgba(22, 39, 59, .1); }
+.billing-workspace { overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.billing-list { display: grid; gap: 9px; }
+.billing-card { overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.billing-card__summary { width: 100%; padding: 13px 14px; border: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.billing-card__summary:hover { background: #f8fafc; }.billing-card__summary > span:last-child { text-align: right; }
+.billing-card__summary strong, .billing-card__summary small { display: block; }.billing-card__summary strong { font-size: .72rem; }.billing-card__summary small { margin-top: 3px; color: var(--muted); font-size: .58rem; }
+.billing-drilldown { padding: 0 14px 14px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+.billing-totals { padding-top: 11px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.billing-totals span { padding: 8px 9px; border-radius: 8px; display: grid; gap: 3px; color: var(--muted); background: #f4f7fa; font-size: .56rem; }.billing-totals strong { color: var(--ink); font-size: .67rem; }
+.responsive-table { overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; }
+.billing-line { min-width: 560px; padding: 9px 10px; display: grid; grid-template-columns: minmax(250px, 1fr) 90px 90px; align-items: center; gap: 8px; font-size: .61rem; }
+.billing-line + .billing-line { border-top: 1px solid var(--line); }.billing-line strong, .billing-line small { display: block; }.billing-line small { margin-top: 3px; color: var(--muted); font-size: .54rem; }
+.billing-actions { justify-content: flex-end; }.money-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.money-card > strong { margin-top: 14px; display: block; font-size: 1.05rem; }.money-card > small { margin-top: 5px; display: block; }
+.billing-source-picker { margin: 0; padding: 11px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 5px; }.billing-source-picker legend { padding: 0 5px; font-size: .65rem; font-weight: 800; }
+.billing-source-picker .checkbox-field { padding: 7px; border-radius: 7px; background: #f7f9fb; }.billing-source-picker strong, .billing-source-picker small { display: block; }.billing-source-picker small { margin-top: 2px; font-size: .56rem; }
 
 @media (max-width: 1100px) {
   .finance-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -4710,6 +4730,8 @@ a {
   .finance-record__actions { grid-column: 2; justify-content: flex-start; }
   .finance-card > footer { align-items: flex-start; flex-direction: column; }
   .finance-disbursement > header { flex-direction: column; }.finance-disbursement > header > div:last-child { justify-items: start; }
+  .matter-finance-switcher { width: 100%; }.matter-finance-switcher button { flex: 1; }
+  .money-grid { grid-template-columns: 1fr; }.billing-card__summary { grid-template-columns: 1fr; }.billing-card__summary > span:last-child { text-align: left; }
 }
 
 @media (max-width: 460px) {

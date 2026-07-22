@@ -53,6 +53,7 @@ import { RepairsQuantumPanel } from '../components/matter/RepairsQuantumPanel.js
 
 const DisclosurePanel = lazy(() => import('../components/matter/DisclosurePanel.js').then((module) => ({ default: module.DisclosurePanel })));
 const FinancePanel = lazy(() => import('../components/matter/FinancePanel.js').then((module) => ({ default: module.FinancePanel })));
+const BillingPanel = lazy(() => import('../components/matter/BillingPanel.js').then((module) => ({ default: module.BillingPanel })));
 
 interface MatterPageProps {
   matterId: string;
@@ -104,6 +105,7 @@ export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPage
   const [proceedingsError, setProceedingsError] = useState('');
   const [mutationError, setMutationError] = useState('');
   const [section, setSection] = useState<MatterSection>(financeOnly ? 'time_finance' : 'overview');
+  const [financeView, setFinanceView] = useState<'time' | 'billing'>('time');
   const [partyOpen, setPartyOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
   const [documentOpen, setDocumentOpen] = useState(false);
@@ -175,6 +177,7 @@ export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPage
     setProceedingsError('');
     setMutationError('');
     setSection(financeOnly ? 'time_finance' : 'overview');
+    setFinanceView('time');
     void loadAll(controller.signal);
     return () => controller.abort();
   }, [financeOnly, loadAll]);
@@ -606,9 +609,15 @@ export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPage
       ) : null}
 
       {section === 'time_finance' ? (
-        <Suspense fallback={<section className="surface tab-surface page-state">Loading time and finance…</section>}>
-          <FinancePanel matterId={matterId} availableDocumentSources={financeDocumentSources} />
-        </Suspense>
+        <div className="matter-finance-area">
+          <nav className="matter-finance-switcher" aria-label="Matter finance workspaces">
+            <button type="button" className={financeView === 'time' ? 'is-active' : ''} aria-current={financeView === 'time' ? 'page' : undefined} onClick={() => setFinanceView('time')}>Time & finance</button>
+            <button type="button" className={financeView === 'billing' ? 'is-active' : ''} aria-current={financeView === 'billing' ? 'page' : undefined} onClick={() => setFinanceView('billing')}>Billing & money</button>
+          </nav>
+          <Suspense fallback={<section className="surface tab-surface page-state">Loading financial workspace…</section>}>
+            {financeView === 'time' ? <FinancePanel matterId={matterId} availableDocumentSources={financeDocumentSources} /> : <BillingPanel matterId={matterId} availableDocumentSources={financeDocumentSources} />}
+          </Suspense>
+        </div>
       ) : null}
 
       {aggregate && section === 'documents' ? (

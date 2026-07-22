@@ -1406,6 +1406,51 @@ export interface FinanceWorkspace {
   sources: { documents: FinanceDocumentSource[] };
 }
 
+export interface MatterBillLine {
+  id: string; lineNumber: number; sourceKind: 'time' | 'disbursement' | 'adjustment'; sourceId: string;
+  narrative: string; netMinor: number; vatTreatment: string; vatMinor: number; grossMinor: number;
+}
+
+export interface MatterBill {
+  id: string; clientPartyId: string; status: string; billReference: string | null;
+  currentVersionId: string; approvedVersionId: string | null; issuedVersionId: string | null;
+  issuedAt: string | null; deliveredAt: string | null; dueOn: string; netMinor: number;
+  vatMinor: number; grossMinor: number; creditedMinor: number; allocatedMinor: number;
+  paidMinor: number; outstandingMinor: number; currency: FinanceCurrency; version: number;
+  preparedBy: string; preparedAt: string; taxPoint: string | null; documentVersionId: string | null;
+  documentSha256: string | null; lines: MatterBillLine[]; events: Array<Record<string, unknown>>;
+}
+
+export interface MatterMoneyBalance {
+  clientPartyId: string; clientHeldMinor: number; clientClearedMinor: number;
+  clientRestrictedMinor: number; clientAvailableMinor: number; clientReservedMinor: number;
+  officeHeldMinor: number;
+}
+
+export interface MatterPayment {
+  id: string; clientPartyId: string; amountMinor: number; purpose: string; preparedBy: string; preparedAt: string;
+  currency: FinanceCurrency; version: number; status: string; events: Array<Record<string, unknown>>;
+}
+
+export interface MatterTransfer {
+  id: string; clientPartyId: string; billId: string; amountMinor: number; preparedBy: string;
+  preparedAt: string; currency: FinanceCurrency; version: number; status: string;
+  events: Array<Record<string, unknown>>;
+}
+
+export interface MatterBillingWorkspace {
+  matterId: string; actingUserId: string;
+  permissions: {
+    canPrepareBill: boolean; canApproveBill: boolean; canIssueBill: boolean;
+    canPrepareTransfer: boolean; canApproveTransfer: boolean; canPostTransfer: boolean;
+  };
+  clients: Array<{ id: string; name: string }>;
+  eligibleSources: Array<{ id: string; kind: 'time' | 'disbursement'; narrative: string; netMinor: number; vatMinor: number | null }>;
+  bills: MatterBill[]; money: MatterMoneyBalance[]; payments: MatterPayment[]; transfers: MatterTransfer[];
+  exceptions: Array<{ id: string; kind: string; severity: string; summary: string; amountMinor: number | null; raisedAt: string }>;
+  history: Array<{ id: string; kind: string; recordId: string; status: string; occurredAt: string; summary: string }>;
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'

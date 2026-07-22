@@ -118,6 +118,12 @@ export const billingCashroomRoutes: FastifyPluginAsync<BillingCashroomRoutesOpti
   const audit = (request: FastifyRequest) => options.auditContext(request);
   const command = <T>(schema: ZodType<T>, request: FastifyRequest) => parse(schema, request.body);
 
+  app.get('/api/finance/billing/matters/:matterId/workspace', async (request, reply) => {
+    try {
+      return { workspace: options.store.getMatterBillingWorkspace(user(request), (request.params as Params).matterId) };
+    } catch (error) { return failure(error, reply); }
+  });
+
   app.get('/api/finance/billing/matters/:matterId/bills/:billId', async (request, reply) => {
     try {
       const { matterId, billId } = request.params as Params;

@@ -113,4 +113,41 @@ describe('Billing & Cashroom Northstar evaluation seed', () => {
       nextReviewDueOn: '2026-11-09',
     });
   });
+
+  it('projects one tenant-safe matter billing workspace with exact sources and capabilities', () => {
+    seedBillingCashroomEvaluation(database);
+    const store = new BillingCashroomStore(database, () => new Date('2026-10-10T15:00:00.000Z'));
+
+    const workspace = store.getMatterBillingWorkspace(finance, SEED_IDS.northstarMatter);
+
+    expect(workspace).toMatchObject({
+      matterId: SEED_IDS.northstarMatter,
+      actingUserId: SEED_IDS.finance,
+      permissions: {
+        canPrepareBill: false,
+        canApproveBill: false,
+        canIssueBill: true,
+        canPrepareTransfer: true,
+        canApproveTransfer: true,
+        canPostTransfer: true,
+      },
+      money: [{
+        clientPartyId: SEED_IDS.northstarClient,
+        clientHeldMinor: 8_000,
+        clientAvailableMinor: 8_000,
+        officeHeldMinor: 60_000,
+      }],
+    });
+    expect(workspace.bills).toHaveLength(1);
+    expect(workspace.bills[0]).toMatchObject({
+      billReference: 'SC-2026-000001', status: 'part_paid', grossMinor: 100_700,
+      paidMinor: 60_000, outstandingMinor: 40_700,
+    });
+    expect(workspace.transfers).toHaveLength(1);
+    expect(workspace.payments.some((payment) => payment.status === 'recorded_external')).toBe(true);
+    expect(workspace.history.some((event) => event.kind === 'bill' && event.status === 'delivered')).toBe(true);
+    expect(workspace.exceptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'changed_beneficiary', severity: 'blocker' }),
+    ]));
+  });
 });

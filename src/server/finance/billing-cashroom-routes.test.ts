@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app.js';
-import { createDatabase, seedDatabase, SEED_IDS } from '../database.js';
+import { createDatabase, seedBillingCashroomEvaluation, seedCommunicationsEvaluation, seedDatabase, seedFinanceEvaluation, SEED_IDS } from '../database.js';
 
 function cookie(response: { headers: Record<string, unknown> }): string {
   const value = response.headers['set-cookie'];
@@ -56,6 +56,33 @@ describe('billing and cashroom routes', () => {
     });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ error: { code: 'UNAUTHENTICATED' } });
+  });
+
+  it('returns the governed matter billing workspace without requiring record IDs', async () => {
+    await seedCommunicationsEvaluation(database);
+    seedFinanceEvaluation(database);
+    seedBillingCashroomEvaluation(database);
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/finance/billing/matters/${SEED_IDS.northstarMatter}/workspace`,
+      headers: { cookie: finance },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().workspace).toMatchObject({
+      matterId: SEED_IDS.northstarMatter,
+      bills: [expect.objectContaining({ billReference: 'SC-2026-000001' })],
+    });
+    expect(response.json().workspace.payments[0]).not.toHaveProperty('bankAccountId');
+    expect(response.json().workspace.payments[0]).not.toHaveProperty('beneficiaryName');
+    expect(response.json().workspace.payments[0]).not.toHaveProperty('beneficiaryFingerprint');
+
+    const hidden = await app.inject({
+      method: 'GET',
+      url: `/api/finance/billing/matters/${SEED_IDS.southbankMatter}/workspace`,
+      headers: { cookie: finance },
+    });
+    expect(hidden.statusCode).toBe(404);
   });
 
   it('applies strict billing command schemas before store access', async () => {
