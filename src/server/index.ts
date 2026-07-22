@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { buildApp } from './app.js';
 import {
   createDatabase,
+  seedBillingCashroomEvaluation,
   seedCommunicationsEvaluation,
   seedDisclosureEvaluation,
   seedFinanceEvaluation,
@@ -14,6 +15,7 @@ import {
   seedPleadingsEvaluation,
   seedRepairsQuantumEvaluation,
 } from './database.js';
+import { storeGeneratedFileSync } from './storage.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number.parseInt(process.env.PORT ?? '4100', 10);
@@ -53,6 +55,10 @@ if (shouldSeed) {
   seedPleadingsEvaluation(database);
   seedDisclosureEvaluation(database);
   seedFinanceEvaluation(database);
+  seedBillingCashroomEvaluation(database, (document) => {
+    const bytes = new TextEncoder().encode(document.content);
+    return { ...document, ...storeGeneratedFileSync(storagePath, bytes) };
+  });
 }
 
 const app = await buildApp({

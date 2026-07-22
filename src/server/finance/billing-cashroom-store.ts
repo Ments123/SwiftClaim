@@ -739,15 +739,9 @@ export class BillingCashroomStore {
       if (rows.length !== 1) throw new BillingCashroomStoreError('INVALID_STATE', `Bill issue requires exactly one active ${accountClass} office account.`);
       return String(rows[0]!.id);
     };
-    const receivable = account('office_asset');
+    const receivable = this.activeAccount(user.firmId, 'TRADE-DEBTORS');
     const income = account('income');
     const vat = bill.vatMinor > 0 ? account('vat_control') : null;
-    const neutralAccount = (accountClass: string) => {
-      const rows = this.database.prepare(`SELECT id FROM finance_accounts WHERE firm_id = ? AND active = 1
-        AND account_class = ? AND designation = 'neutral' ORDER BY code`).all(user.firmId, accountClass) as Row[];
-      if (rows.length !== 1) throw new BillingCashroomStoreError('INVALID_STATE', `Bill issue requires exactly one active ${accountClass} neutral account.`);
-      return String(rows[0]!.id);
-    };
     const timeSources = bill.lines.filter((line) => line.sourceKind === 'time');
     const consumedWipMinor = timeSources.reduce((total, line) => total + line.netMinor, 0);
     const journalId = randomUUID();
@@ -767,8 +761,10 @@ export class BillingCashroomStore {
     let nextLine = 3;
     if (vat) insertLine.run(randomUUID(), user.firmId, matterId, journalId, nextLine++, vat, 0, bill.vatMinor, 'Recognise VAT liability');
     if (consumedWipMinor > 0) {
-      insertLine.run(randomUUID(), user.firmId, matterId, journalId, nextLine++, neutralAccount('suspense'), consumedWipMinor, 0, 'Release billed WIP offset control');
-      insertLine.run(randomUUID(), user.firmId, matterId, journalId, nextLine, neutralAccount('wip_asset'), 0, consumedWipMinor, 'Release consumed approved WIP');
+      insertLine.run(randomUUID(), user.firmId, matterId, journalId, nextLine++,
+        this.activeAccount(user.firmId, 'WIP-OFFSET'), consumedWipMinor, 0, 'Release billed WIP offset control');
+      insertLine.run(randomUUID(), user.firmId, matterId, journalId, nextLine,
+        this.activeAccount(user.firmId, 'WIP-CONTROL'), 0, consumedWipMinor, 'Release consumed approved WIP');
     }
     const insertEvent = this.database.prepare(`INSERT INTO finance_journal_events (
       id, firm_id, matter_id, journal_id, sequence, event_type, note, occurred_at, recorded_by, recorded_at
@@ -1742,7 +1738,8 @@ export class BillingCashroomStore {
     let line = 1;
     insertLine.run(randomUUID(), user.firmId, matterId, journalId, line++, account('income'), credit.netMinor, 0, 'Reverse credited income');
     if (credit.vatMinor > 0) insertLine.run(randomUUID(), user.firmId, matterId, journalId, line++, account('vat_control'), credit.vatMinor, 0, 'Reverse credited VAT liability');
-    insertLine.run(randomUUID(), user.firmId, matterId, journalId, line, account('office_asset'), 0, credit.grossMinor, 'Reduce trade debtor by issued credit');
+    insertLine.run(randomUUID(), user.firmId, matterId, journalId, line,
+      this.activeAccount(user.firmId, 'TRADE-DEBTORS'), 0, credit.grossMinor, 'Reduce trade debtor by issued credit');
     const event = this.database.prepare(`INSERT INTO finance_journal_events (
       id, firm_id, matter_id, journal_id, sequence, event_type, note, occurred_at, recorded_by, recorded_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
