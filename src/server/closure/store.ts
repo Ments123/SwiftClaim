@@ -359,7 +359,7 @@ export class ClosureStore {
       retentionBasis: String(review.retentionBasis), retentionUntil: String(review.retentionUntil),
       preparedBy: String(review.preparedBy), preparedAt: String(review.preparedAt),
     } : null;
-    return { matterId, status, readOnly: status === 'closed', currentReadiness: this.getSnapshot(user, matterId),
+    return { matterId, actingUserId: user.id, status, readOnly: status === 'closed', currentReadiness: this.getSnapshot(user, matterId),
       review: mappedReview, blockers, obligations, holds,
       destructionSuspended: activeHold, events };
   }

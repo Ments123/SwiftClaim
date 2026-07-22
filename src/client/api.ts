@@ -1488,6 +1488,7 @@ export interface CashroomWorkspace {
 
 export interface ClosureWorkspace {
   matterId: string;
+  actingUserId: string;
   status: 'active' | 'prepared' | 'approved' | 'closed';
   readOnly: boolean;
   destructionSuspended: boolean;
@@ -1525,6 +1526,7 @@ export type MatterSection =
   | 'tasks_calendar'
   | 'time_finance'
   | 'chronology'
+  | 'closure_retention'
   | 'audit';
 
 export interface TransitionWorkflowCommand {
