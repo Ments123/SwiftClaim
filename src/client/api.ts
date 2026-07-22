@@ -1486,6 +1486,29 @@ export interface CashroomWorkspace {
   exports: Array<{ kind: 'bills' | 'cashbook' | 'reconciliations'; href: string }>;
 }
 
+export interface ClosureWorkspace {
+  matterId: string;
+  status: 'active' | 'prepared' | 'approved' | 'closed';
+  readOnly: boolean;
+  destructionSuspended: boolean;
+  permissions: { canPrepare: boolean; canApprove: boolean; canReopen: boolean; canManageHold: boolean };
+  currentReadiness: { hash: string; calculatedAt: string; blockers: ClosureBlocker[] };
+  review: null | { id: string; sequence: number; snapshotHash: string; outcome: string; closureReason: string;
+    lessons: string; finalClientReportStatus: string; finalClientReportDocumentVersionId: string;
+    documentsPosition: string; documentsNote: string; retentionBasis: string; retentionUntil: string;
+    preparedBy: string; preparedAt: string };
+  blockers: ClosureBlocker[];
+  obligations: Array<{ id: string; reviewId: string; blockerKey: string; title: string; reason: string;
+    ownerUserId: string; dueOn: string; status: string; createdAt: string }>;
+  holds: Array<{ id: string; reason: string; createdAt: string; status: 'applied' | 'released' }>;
+  events: Array<{ id: string; sequence: number; eventType: string; reviewId: string | null; reason: string;
+    responsibleOwnerUserId: string | null; recordedBy: string; recordedAt: string }>;
+}
+
+export interface ClosureBlocker {
+  key: string; category: string; label: string; severity: 'critical' | 'residual'; transferable: boolean; sourceId: string | null;
+}
+
 export type MatterSection =
   | 'overview'
   | 'client_household'

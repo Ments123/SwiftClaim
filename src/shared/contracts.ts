@@ -2739,6 +2739,48 @@ export const completeFinanceReconciliationSchema = z.object({
   completedAt: financeDateTimeSchema, explicitHumanConfirmation: z.literal(true),
 }).strict();
 
+const closureCommandKeySchema = z.string().trim().min(8).max(200);
+const closureDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const closureTransferSchema = z.object({
+  blockerKey: z.string().trim().min(3).max(300),
+  ownerUserId: z.string().uuid(),
+  dueOn: closureDateSchema,
+  reason: z.string().trim().min(10).max(2_000),
+}).strict();
+export const prepareMatterClosureSchema = z.object({
+  outcome: z.string().trim().min(10).max(8_000),
+  closureReason: z.string().trim().min(10).max(4_000),
+  lessons: z.string().trim().min(10).max(4_000),
+  finalClientReportStatus: z.literal('sent'),
+  finalClientReportDocumentVersionId: z.string().uuid(),
+  documentsPosition: z.enum(['returned', 'retained', 'mixed']),
+  documentsNote: z.string().trim().min(10).max(4_000),
+  retentionBasis: z.string().trim().min(10).max(4_000),
+  retentionUntil: closureDateSchema,
+  undertakingsConfirmedClear: z.literal(true),
+  complaintsConfirmedClear: z.literal(true),
+  attestationNote: z.string().trim().min(10).max(4_000),
+  transfers: z.array(closureTransferSchema).max(200),
+  explicitHumanAuthority: z.literal(true),
+  idempotencyKey: closureCommandKeySchema,
+}).strict();
+export const decideMatterClosureSchema = z.object({
+  note: z.string().trim().min(10).max(4_000),
+  explicitHumanAuthority: z.literal(true),
+  idempotencyKey: closureCommandKeySchema,
+}).strict();
+export const reopenMatterSchema = z.object({
+  reason: z.string().trim().min(10).max(4_000),
+  newOwnerUserId: z.string().uuid(),
+  explicitHumanAuthority: z.literal(true),
+  idempotencyKey: closureCommandKeySchema,
+}).strict();
+export const legalHoldSchema = z.object({
+  reason: z.string().trim().min(10).max(4_000),
+  explicitHumanAuthority: z.literal(true),
+  idempotencyKey: closureCommandKeySchema,
+}).strict();
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -2878,6 +2920,10 @@ export type PrepareFinanceClientOfficeTransferInput = z.infer<typeof prepareFina
 export type ApproveFinanceClientOfficeTransferInput = z.infer<typeof approveFinanceClientOfficeTransferSchema>;
 export type PostFinanceClientOfficeTransferInput = z.infer<typeof postFinanceClientOfficeTransferSchema>;
 export type CompleteFinanceReconciliationInput = z.infer<typeof completeFinanceReconciliationSchema>;
+export type PrepareMatterClosureInput = z.infer<typeof prepareMatterClosureSchema>;
+export type DecideMatterClosureInput = z.infer<typeof decideMatterClosureSchema>;
+export type ReopenMatterCommand = z.infer<typeof reopenMatterSchema>;
+export type LegalHoldCommand = z.infer<typeof legalHoldSchema>;
 
 export interface ApiErrorBody {
   error: {

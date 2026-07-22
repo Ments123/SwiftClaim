@@ -13,6 +13,9 @@ import Fastify, {
 } from 'fastify';
 import { ZodError } from 'zod';
 import { assertMatterMutable, MatterReadOnlyError } from './closure/mutation-guard.js';
+import { closureRoutes } from './closure/routes.js';
+import { ClosureService } from './closure/service.js';
+import { ClosureStore } from './closure/store.js';
 
 import {
   createMatterSchema,
@@ -213,6 +216,7 @@ export async function buildApp(
     const stored = storeGeneratedFileSync(options.storagePath, bytes);
     return { ...document, ...stored };
   });
+  const closureService = new ClosureService(new ClosureStore(database, now));
   const workflowService = new WorkflowService(
     matterStore,
     workflowStore,
@@ -751,6 +755,12 @@ export async function buildApp(
       requestId: request.id,
       ipAddress: request.ip,
     }),
+  });
+
+  await app.register(closureRoutes, {
+    service: closureService,
+    requireUser,
+    auditContext: (request) => ({ requestId: request.id, ipAddress: request.ip }),
   });
 
   return app;
