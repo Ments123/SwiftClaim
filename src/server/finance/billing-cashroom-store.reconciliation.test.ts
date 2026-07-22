@@ -131,6 +131,26 @@ describe('BillingCashroomStore bank reconciliation', () => {
       expectedVersion: 2, idempotencyKey: 'reconciliation-reject-after-split', statementLineId: batch.lines[0]!.id,
       decision: 'reject', matches: [], explanation: 'A retained decision cannot be silently replaced.', explicitHumanConfirmation: true,
     }, audit)).toThrowError(expect.objectContaining({ code: 'CONFLICT' }));
+
+    const rejectedBatch = store.importBankStatement(finance, { ...importInput,
+      idempotencyKey: 'statement-import-rejected', rawChecksum: 'e'.repeat(64),
+      lines: [{ ...importInput.lines[0]!, providerLineId: 'rejected-line', rawLineHash: 'f'.repeat(64) }] }, audit);
+    const rejectedReconciliation = store.prepareReconciliation(finance, {
+      idempotencyKey: 'reconciliation-prepare-rejected', bankAccountId: importInput.bankAccountId,
+      statementBatchId: rejectedBatch.id, ledgerClearedBalanceMinor: 100_000, outstandingLodgementsMinor: 0,
+      unpresentedPaymentsMinor: 0, documentedAdjustmentsMinor: 0, items: [],
+      note: 'Prepared for one immutable rejection decision.', explicitHumanConfirmation: true,
+    }, audit);
+    const rejected = store.decideReconciliationMatch(finance, rejectedReconciliation.id, {
+      expectedVersion: 1, idempotencyKey: 'reconciliation-reject-001', statementLineId: rejectedBatch.lines[0]!.id,
+      decision: 'reject', matches: [], explanation: 'A human rejected this exact provisional candidate.', explicitHumanConfirmation: true,
+    }, audit);
+    expect(rejected.items).toEqual([expect.objectContaining({ statementLineId: rejectedBatch.lines[0]!.id,
+      journalId: null, amountMinor: 100_000 })]);
+    expect(() => store.decideReconciliationMatch(finance, rejectedReconciliation.id, {
+      expectedVersion: 2, idempotencyKey: 'reconciliation-reject-002', statementLineId: rejectedBatch.lines[0]!.id,
+      decision: 'reject', matches: [], explanation: 'A retained rejection cannot be repeated.', explicitHumanConfirmation: true,
+    }, audit)).toThrowError(expect.objectContaining({ code: 'CONFLICT' }));
   });
 
   it('blocks completion where the frozen arithmetic does not reconcile', () => {

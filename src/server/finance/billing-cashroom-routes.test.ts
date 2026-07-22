@@ -130,6 +130,35 @@ describe('billing and cashroom routes', () => {
     expect(allowed.statusCode).toBe(200);
     expect(allowed.headers['content-type']).toContain('text/csv');
     expect(allowed.body).toBe('bill_reference,matter_id,client_party_id,due_on,net_minor,vat_minor,gross_minor,currency,status\n');
+    expect(allowed.headers['x-swiftclaim-export-sha256']).toMatch(/^[a-f0-9]{64}$/);
+    expect(allowed.headers['x-swiftclaim-export-manifest']).toMatch(/^[0-9a-f-]{36}$/);
+    const manifest = database.prepare(`SELECT export_kind AS kind,filters_json AS filtersJson,
+      columns_json AS columnsJson,row_count AS rowCount,sha256 FROM finance_export_manifests WHERE id=?`)
+      .get(String(allowed.headers['x-swiftclaim-export-manifest'])) as Record<string, unknown>;
+    expect(manifest).toMatchObject({ kind: 'bills', filtersJson: '{}', rowCount: 0,
+      sha256: allowed.headers['x-swiftclaim-export-sha256'] });
+    expect(JSON.parse(String(manifest.columnsJson))).toEqual([
+      'bill_reference','matter_id','client_party_id','due_on','net_minor','vat_minor','gross_minor','currency','status',
+    ]);
+  });
+
+  it('exposes one privacy-safe firm cashroom projection only to firm-finance readers', async () => {
+    await seedCommunicationsEvaluation(database);
+    seedFinanceEvaluation(database);
+    seedBillingCashroomEvaluation(database);
+    const allowed = await app.inject({ method: 'GET', url: '/api/finance/cashroom/workspace', headers: { cookie: finance } });
+    const denied = await app.inject({ method: 'GET', url: '/api/finance/cashroom/workspace', headers: { cookie: solicitor } });
+
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json().workspace).toMatchObject({
+      summary: { issuedGrossMinor: 100_700, outstandingMinor: 40_700, unallocatedReceiptsMinor: 15_000 },
+      bills: [expect.objectContaining({ billReference: 'SC-2026-000001', ageBucket: 'not_due' })],
+      bankAccounts: expect.arrayContaining([expect.objectContaining({ accountIdentifierMasked: '****5678' })]),
+      exceptions: expect.arrayContaining([expect.objectContaining({ kind: 'changed_beneficiary' })]),
+    });
+    expect(JSON.stringify(allowed.json())).not.toContain('beneficiaryFingerprint');
+    expect(JSON.stringify(allowed.json())).not.toContain('beneficiaryName');
+    expect(denied.statusCode).toBe(403);
   });
 
   it('retains multipart statement evidence behind an exact finance-only grant', async () => {

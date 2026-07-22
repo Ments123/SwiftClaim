@@ -7,6 +7,7 @@ import {
   Menu,
   Scale,
   ShieldCheck,
+  Landmark,
   X,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -15,10 +16,11 @@ import type { CurrentUser } from '../api.js';
 
 interface AppShellProps {
   user: CurrentUser;
-  page: 'dashboard' | 'intake' | 'enquiry' | 'matter';
+  page: 'dashboard' | 'intake' | 'enquiry' | 'matter' | 'cashroom';
   matterReference?: string;
   onDashboard: () => void;
   onIntake: () => void;
+  onCashroom: () => void;
   onLogout: () => void;
   children: ReactNode;
 }
@@ -37,6 +39,7 @@ export function AppShell({
   matterReference,
   onDashboard,
   onIntake,
+  onCashroom,
   onLogout,
   children,
 }: AppShellProps) {
@@ -50,6 +53,11 @@ export function AppShell({
   const navigateIntake = () => {
     setMobileOpen(false);
     onIntake();
+  };
+
+  const navigateCashroom = () => {
+    setMobileOpen(false);
+    onCashroom();
   };
 
   const sidebar = (
@@ -74,6 +82,12 @@ export function AppShell({
           <CalendarDays size={18} aria-hidden="true" />
           <span>Today</span>
         </button>
+        {user.permissions.canAccessCashroom ? (
+          <button type="button" className={page === 'cashroom' ? 'navigation-item is-active' : 'navigation-item'} onClick={navigateCashroom}>
+            <Landmark size={18} aria-hidden="true" />
+            <span>Cashroom</span>
+          </button>
+        ) : null}
         {user.permissions.canAccessIntake ? (
           <button
             type="button"

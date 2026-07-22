@@ -24,7 +24,7 @@ import { calculateBillTotals, calculateVat, type VatCalculation, type VatTreatme
 import { projectBill, type BillLifecycleEvent, type BillVersionSnapshot } from './billing.js';
 import { projectCreditImpact } from './billing.js';
 import { projectMatterMoney } from './cashroom.js';
-import { calculateReconciliation, nextReviewDueOn } from './reconciliation.js';
+import { calculateReconciliation, nextReviewDueOn, suggestBankMatches } from './reconciliation.js';
 
 type Row = Record<string, string | number | null>;
 
@@ -260,6 +260,130 @@ export class BillingCashroomStore {
     };
   }
 
+  getFirmCashroomWorkspace(user: SessionUser) {
+    this.requireCapability(user, 'finance.read_firm');
+    const billIds = (this.database.prepare(`SELECT id,matter_id AS matterId FROM finance_bills
+      WHERE firm_id=? AND bill_reference IS NOT NULL ORDER BY bill_number DESC,id`)
+      .all(user.firmId) as Row[]);
+    const bills = billIds.map((row) => {
+      const bill = this.getBill(user, String(row.matterId), String(row.id))!;
+      const days = Math.floor((Date.parse(bill.dueOn) - Date.parse(this.now().toISOString().slice(0, 10))) / 86_400_000);
+      const ageBucket = bill.outstandingMinor === 0 ? 'paid' : days >= 0 ? 'not_due'
+        : days >= -30 ? '1_30' : days >= -60 ? '31_60' : days >= -90 ? '61_90' : '90_plus';
+      const matter = this.database.prepare(`SELECT reference FROM matters WHERE id=? AND firm_id=?`)
+        .get(row.matterId, user.firmId) as Row;
+      return { id: bill.id, matterId: String(row.matterId), matterReference: String(matter.reference),
+        clientPartyId: bill.clientPartyId, billReference: bill.billReference!, dueOn: bill.dueOn,
+        grossMinor: bill.grossMinor, creditedMinor: bill.creditedMinor, paidMinor: bill.paidMinor,
+        outstandingMinor: bill.outstandingMinor, currency: bill.currency, status: bill.status, ageBucket };
+    });
+    const receiptIds = (this.database.prepare(`SELECT id FROM finance_receipts WHERE firm_id=? ORDER BY received_on DESC,id`)
+      .all(user.firmId) as Row[]).map((row) => String(row.id));
+    const receipts = receiptIds.map((id) => {
+      const receipt = this.getReceipt(user, id)!;
+      const reversed = new Set(receipt.allocations.filter((allocation) => allocation.reversesAllocationId)
+        .map((allocation) => allocation.reversesAllocationId));
+      const active = receipt.allocations.filter((allocation) => !allocation.reversesAllocationId && !reversed.has(allocation.id));
+      const activeAllocatedMinor = active.filter((allocation) => allocation.designation !== 'suspense')
+        .reduce((total, allocation) => total + allocation.amountMinor, 0);
+      const suspenseMinor = active.filter((allocation) => allocation.designation === 'suspense')
+        .reduce((total, allocation) => total + allocation.amountMinor, 0);
+      return { id: receipt.id, bankAccountId: receipt.bankAccountId, amountMinor: receipt.amountMinor,
+        allocatedMinor: activeAllocatedMinor, unallocatedMinor: receipt.amountMinor - activeAllocatedMinor,
+        receivedOn: receipt.receivedOn, reference: receipt.reference, currency: receipt.currency,
+        status: suspenseMinor === receipt.amountMinor ? 'suspense' : activeAllocatedMinor === 0 ? 'unallocated'
+          : activeAllocatedMinor === receipt.amountMinor ? 'allocated' : 'part_allocated' };
+    });
+    const payments = (this.database.prepare(`SELECT p.id,p.matter_id AS matterId,m.reference AS matterReference,
+      p.client_party_id AS clientPartyId,p.amount_minor AS amountMinor,p.currency,p.purpose,p.prepared_by AS preparedBy,
+      p.prepared_at AS preparedAt,(SELECT e.event_type FROM finance_payment_events e WHERE e.payment_id=p.id
+      AND e.firm_id=p.firm_id AND e.matter_id=p.matter_id ORDER BY e.sequence DESC LIMIT 1) AS status
+      FROM finance_payment_requisitions p JOIN matters m ON m.id=p.matter_id AND m.firm_id=p.firm_id
+      WHERE p.firm_id=? ORDER BY p.prepared_at DESC,p.id`).all(user.firmId) as Row[]).map((row) => ({
+        id: String(row.id), matterId: String(row.matterId), matterReference: String(row.matterReference),
+        clientPartyId: String(row.clientPartyId), amountMinor: Number(row.amountMinor), currency: 'GBP' as const,
+        purpose: String(row.purpose), preparedBy: String(row.preparedBy), preparedAt: String(row.preparedAt), status: String(row.status),
+      }));
+    const bankAccounts = (this.database.prepare(`SELECT b.id,b.name,b.designation,b.account_identifier_masked AS accountIdentifierMasked,
+      b.currency,b.active,MAX(s.statement_to) AS latestStatementTo FROM finance_bank_accounts b
+      LEFT JOIN finance_bank_statement_batches s ON s.bank_account_id=b.id AND s.firm_id=b.firm_id
+      WHERE b.firm_id=? GROUP BY b.id ORDER BY b.designation,b.name,b.id`).all(user.firmId) as Row[]).map((row) => ({
+        id: String(row.id), name: String(row.name), designation: String(row.designation),
+        accountIdentifierMasked: String(row.accountIdentifierMasked), currency: 'GBP' as const,
+        active: Boolean(row.active), latestStatementTo: row.latestStatementTo ? String(row.latestStatementTo) : null,
+      }));
+    const reconciliationIds = (this.database.prepare(`SELECT id FROM finance_reconciliations WHERE firm_id=?
+      ORDER BY statement_closing_on DESC,id`).all(user.firmId) as Row[]).map((row) => String(row.id));
+    const reconciliations = reconciliationIds.map((id) => {
+      const value = this.getReconciliation(user, id)!;
+      return { id: value.id, bankAccountId: value.bankAccountId, statementBatchId: value.statementBatchId,
+        statementClosingOn: value.statementClosingOn, statementClosingBalanceMinor: value.statementClosingBalanceMinor,
+        ledgerClearedBalanceMinor: value.ledgerClearedBalanceMinor, differenceMinor: value.differenceMinor,
+        currency: value.currency, preparedBy: value.preparedBy, preparedAt: value.preparedAt,
+        version: value.version, status: value.status, nextReviewDueOn: value.nextReviewDueOn };
+    });
+    const statementIds = (this.database.prepare(`SELECT id FROM finance_bank_statement_batches WHERE firm_id=?
+      ORDER BY statement_to DESC,id`).all(user.firmId) as Row[]).map((row) => String(row.id));
+    const statements = statementIds.map((id) => {
+      const statement = this.getBankStatementBatch(user, id)!;
+      const reconciliation = reconciliations.find((item) => item.statementBatchId === id);
+      const retained = reconciliation ? this.getReconciliation(user, reconciliation.id)! : null;
+      const decisions = new Map(retained?.items.filter((item) => item.statementLineId)
+        .map((item) => [item.statementLineId!, item]) ?? []);
+      const journals = (this.database.prepare(`SELECT j.id,j.accounting_date AS accountingDate,
+        (l.debit_minor-l.credit_minor) AS amountMinor,j.description AS reference
+        FROM finance_bank_accounts b JOIN finance_journal_lines l ON l.account_id=b.ledger_account_id AND l.firm_id=b.firm_id
+        JOIN finance_journals j ON j.id=l.journal_id AND j.firm_id=l.firm_id AND j.matter_id=l.matter_id
+        WHERE b.id=? AND b.firm_id=? AND EXISTS (SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id
+        AND e.firm_id=j.firm_id AND e.matter_id=j.matter_id AND e.event_type='posted') ORDER BY j.accounting_date,j.id`)
+        .all(statement.bankAccountId, user.firmId) as Row[]).map((row) => ({ id: String(row.id),
+          accountingDate: String(row.accountingDate), amountMinor: Number(row.amountMinor), reference: String(row.reference) }));
+      const suggestions = new Map(suggestBankMatches({ statementLines: statement.lines.map((line) => ({
+        id: line.id, transactionDate: line.transactionDate, amountMinor: line.amountMinor, reference: line.reference,
+      })), journalEntries: journals }).map((suggestion) => [suggestion.statementLineId, suggestion]));
+      return { id: statement.id, bankAccountId: statement.bankAccountId, statementFrom: statement.statementFrom,
+        statementTo: statement.statementTo, closingBalanceMinor: statement.closingBalanceMinor, currency: statement.currency,
+        reconciliationId: reconciliation?.id ?? null, reconciliationStatus: reconciliation?.status ?? null,
+        reconciliationVersion: reconciliation?.version ?? null,
+        lines: statement.lines.map((line) => ({ id: line.id, transactionDate: line.transactionDate,
+          amountMinor: line.amountMinor, reference: line.reference,
+          decision: decisions.has(line.id)
+            ? decisions.get(line.id)!.journalId ? 'human_confirmed' as const : 'human_rejected' as const
+            : null,
+          suggestion: decisions.has(line.id) ? null : suggestions.get(line.id) ?? null })),
+      };
+    });
+    const exceptions = (this.database.prepare(`SELECT id,matter_id AS matterId,exception_kind AS kind,severity,
+      safe_summary AS summary,amount_minor AS amountMinor,currency,raised_at AS raisedAt FROM finance_exceptions
+      WHERE firm_id=? ORDER BY CASE severity WHEN 'blocker' THEN 0 ELSE 1 END,raised_at DESC,id`)
+      .all(user.firmId) as Row[]).map((row) => ({ id: String(row.id), matterId: row.matterId ? String(row.matterId) : null,
+        kind: String(row.kind), severity: String(row.severity), summary: String(row.summary),
+        amountMinor: row.amountMinor === null ? null : Number(row.amountMinor), currency: row.currency ? 'GBP' as const : null,
+        raisedAt: String(row.raisedAt) }));
+    return {
+      actingUserId: user.id,
+      permissions: {
+        canRecordBankActivity: hasCapability(user, 'finance.record_bank_activity'),
+        canAllocateMoney: hasCapability(user, 'finance.allocate_money'),
+        canPreparePayment: hasCapability(user, 'finance.prepare_client_payment'),
+        canApprovePayment: hasCapability(user, 'finance.approve_client_payment'),
+        canPostCashroom: hasCapability(user, 'finance.post_cashroom'),
+        canPrepareReconciliation: hasCapability(user, 'finance.prepare_reconciliation'),
+        canSignoffReconciliation: hasCapability(user, 'finance.signoff_reconciliation'),
+        canExport: hasCapability(user, 'finance.export_accounts'),
+      },
+      summary: {
+        issuedGrossMinor: bills.reduce((sum, bill) => sum + bill.grossMinor, 0),
+        outstandingMinor: bills.reduce((sum, bill) => sum + bill.outstandingMinor, 0),
+        overdueBills: bills.filter((bill) => !['not_due','paid'].includes(bill.ageBucket)).length,
+        unallocatedReceiptsMinor: receipts.reduce((sum, receipt) => sum + receipt.unallocatedMinor, 0),
+        blockerExceptions: exceptions.filter((exception) => exception.severity === 'blocker').length,
+      },
+      bills, receipts, payments, bankAccounts, statements, reconciliations, exceptions,
+      exports: ['bills','cashbook','reconciliations'].map((kind) => ({ kind, href: `/api/finance/cashroom/exports/${kind}` })),
+    };
+  }
+
   retainStatementEvidence(user: SessionUser, input: RetainedFinancialEvidenceInput, audit: AuditContext) {
     this.requireCapability(user, 'finance.record_bank_activity');
     if (!this.canReadMatter(user, input.matterId)) throw new BillingCashroomStoreError('NOT_FOUND', 'The evidence matter was not found.');
@@ -345,46 +469,57 @@ export class BillingCashroomStore {
       sizeBytes: Number(row.sizeBytes), sha256: String(row.sha256), storageKey: String(row.storageKey) } : null;
   }
 
-  exportRegister(user: SessionUser, kind: 'bills' | 'cashbook' | 'reconciliations'): string {
+  exportRegister(user: SessionUser, kind: 'bills' | 'cashbook' | 'reconciliations'):
+    { csv: string; manifestId: string; sha256: string } {
     this.requireCapability(user, 'finance.export_accounts');
     const escape = (value: unknown) => {
       const raw = String(value ?? '');
       const protectedValue = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
       return /[",\r\n]/.test(protectedValue) ? `"${protectedValue.replaceAll('"', '""')}"` : protectedValue;
     };
+    let header: string[];
+    let rows: Row[];
+    let csv: string;
     if (kind === 'bills') {
-      const header = ['bill_reference','matter_id','client_party_id','due_on','net_minor','vat_minor','gross_minor','currency','status'];
-      const rows = this.database.prepare(`SELECT b.bill_reference AS billReference,b.matter_id AS matterId,
+      header = ['bill_reference','matter_id','client_party_id','due_on','net_minor','vat_minor','gross_minor','currency','status'];
+      rows = this.database.prepare(`SELECT b.bill_reference AS billReference,b.matter_id AS matterId,
         b.client_party_id AS clientPartyId,v.due_on AS dueOn,v.net_minor AS netMinor,v.vat_minor AS vatMinor,
         v.gross_minor AS grossMinor,v.currency,(SELECT e.event_type FROM finance_bill_events e WHERE e.bill_id=b.id
         AND e.firm_id=b.firm_id AND e.matter_id=b.matter_id ORDER BY e.sequence DESC LIMIT 1) AS status
         FROM finance_bills b JOIN finance_bill_versions v ON v.id=(SELECT e.bill_version_id FROM finance_bill_events e
         WHERE e.bill_id=b.id AND e.firm_id=b.firm_id AND e.matter_id=b.matter_id AND e.event_type='issued' LIMIT 1)
         WHERE b.firm_id=? AND b.bill_reference IS NOT NULL ORDER BY b.bill_number`).all(user.firmId) as Row[];
-      return `${header.join(',')}\n${rows.map((row) => [row.billReference,row.matterId,row.clientPartyId,row.dueOn,row.netMinor,
+      csv = `${header.join(',')}\n${rows.map((row) => [row.billReference,row.matterId,row.clientPartyId,row.dueOn,row.netMinor,
         row.vatMinor,row.grossMinor,row.currency,row.status].map(escape).join(',')).join('\n')}${rows.length ? '\n' : ''}`;
-    }
-    if (kind === 'cashbook') {
-      const header = ['accounting_date','journal_id','matter_id','source_kind','source_id','account_code','debit_minor','credit_minor','currency'];
-      const rows = this.database.prepare(`SELECT j.accounting_date AS accountingDate,j.id AS journalId,j.matter_id AS matterId,
+    } else if (kind === 'cashbook') {
+      header = ['accounting_date','journal_id','matter_id','source_kind','source_id','account_code','debit_minor','credit_minor','currency'];
+      rows = this.database.prepare(`SELECT j.accounting_date AS accountingDate,j.id AS journalId,j.matter_id AS matterId,
         j.source_kind AS sourceKind,j.source_id AS sourceId,a.code,l.debit_minor AS debitMinor,l.credit_minor AS creditMinor,l.currency
         FROM finance_journals j JOIN finance_journal_lines l ON l.journal_id=j.id AND l.firm_id=j.firm_id AND l.matter_id=j.matter_id
         JOIN finance_accounts a ON a.id=l.account_id AND a.firm_id=l.firm_id WHERE j.firm_id=? AND EXISTS (
           SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id AND e.firm_id=j.firm_id AND e.matter_id=j.matter_id
           AND e.event_type='posted') ORDER BY j.accounting_date,j.id,l.line_number`).all(user.firmId) as Row[];
-      return `${header.join(',')}\n${rows.map((row) => [row.accountingDate,row.journalId,row.matterId,row.sourceKind,row.sourceId,row.code,
+      csv = `${header.join(',')}\n${rows.map((row) => [row.accountingDate,row.journalId,row.matterId,row.sourceKind,row.sourceId,row.code,
         row.debitMinor,row.creditMinor,row.currency].map(escape).join(',')).join('\n')}${rows.length ? '\n' : ''}`;
-    }
-    const header = ['reconciliation_id','bank_account_id','statement_closing_on','statement_closing_balance_minor','ledger_cleared_balance_minor','difference_minor','currency','status','next_review_due_on'];
-    const rows = this.database.prepare(`SELECT r.id,r.bank_account_id AS bankAccountId,r.statement_closing_on AS statementClosingOn,
+    } else {
+      header = ['reconciliation_id','bank_account_id','statement_closing_on','statement_closing_balance_minor','ledger_cleared_balance_minor','difference_minor','currency','status','next_review_due_on'];
+      rows = this.database.prepare(`SELECT r.id,r.bank_account_id AS bankAccountId,r.statement_closing_on AS statementClosingOn,
       r.statement_closing_balance_minor AS statementClosingBalanceMinor,r.ledger_cleared_balance_minor AS ledgerClearedBalanceMinor,
       r.difference_minor AS differenceMinor,r.currency,CASE WHEN s.id IS NOT NULL THEN 'signed_off' WHEN EXISTS (
         SELECT 1 FROM finance_reconciliation_events e WHERE e.reconciliation_id=r.id AND e.firm_id=r.firm_id AND e.event_type='completed'
       ) THEN 'completed' ELSE 'prepared' END AS status,s.next_review_due_on AS nextReviewDueOn
       FROM finance_reconciliations r LEFT JOIN finance_reconciliation_signoffs s ON s.reconciliation_id=r.id AND s.firm_id=r.firm_id
       WHERE r.firm_id=? ORDER BY r.statement_closing_on,r.id`).all(user.firmId) as Row[];
-    return `${header.join(',')}\n${rows.map((row) => [row.id,row.bankAccountId,row.statementClosingOn,row.statementClosingBalanceMinor,
+      csv = `${header.join(',')}\n${rows.map((row) => [row.id,row.bankAccountId,row.statementClosingOn,row.statementClosingBalanceMinor,
       row.ledgerClearedBalanceMinor,row.differenceMinor,row.currency,row.status,row.nextReviewDueOn].map(escape).join(',')).join('\n')}${rows.length ? '\n' : ''}`;
+    }
+    const sha256 = createHash('sha256').update(csv).digest('hex');
+    const manifestId = randomUUID();
+    this.database.prepare(`INSERT INTO finance_export_manifests
+      (id,firm_id,export_kind,filters_json,columns_json,row_count,sha256,generated_by,generated_at)
+      VALUES (?, ?, ?, '{}', ?, ?, ?, ?, ?)`).run(manifestId, user.firmId, kind, JSON.stringify(header), rows.length,
+      sha256, user.id, this.now().toISOString());
+    return { csv, manifestId, sha256 };
   }
 
   private canReadMatter(user: SessionUser, matterId: string): boolean {
@@ -1709,6 +1844,10 @@ export class BillingCashroomStore {
       const insertItem = this.database.prepare(`INSERT INTO finance_reconciliation_items
         (id,firm_id,reconciliation_id,item_kind,statement_line_id,journal_id,amount_minor,evidence_document_version_id,
           explanation,created_by,created_at) VALUES (?, ?, ?, 'statement_match', ?, ?, ?, NULL, ?, ?, ?)`);
+      if (input.decision === 'reject') {
+        insertItem.run(randomUUID(), user.firmId, reconciliationId, input.statementLineId, null,
+          Number(line.amountMinor), input.explanation, user.id, at);
+      }
       for (const match of input.matches) {
         const posted = this.database.prepare(`SELECT 1 FROM finance_journals j WHERE j.id=? AND j.firm_id=? AND EXISTS (
           SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id AND e.firm_id=j.firm_id AND e.matter_id=j.matter_id

@@ -143,6 +143,7 @@ function publicUser(user: SessionUser) {
       canApproveProtocol: hasCapability(user, 'protocol.approve'),
       canOverrideExpertConflict: hasCapability(user, 'protocol.override_conflict'),
       canReviewExpertReport: hasCapability(user, 'protocol.review_report'),
+      canAccessCashroom: hasCapability(user, 'finance.read_firm'),
       canReadQuantum: hasCapability(user, 'quantum.read'),
       canWriteQuantum: hasCapability(user, 'quantum.write'),
       canApproveQuantum: hasCapability(user, 'quantum.approve'),

@@ -124,6 +124,11 @@ export const billingCashroomRoutes: FastifyPluginAsync<BillingCashroomRoutesOpti
     } catch (error) { return failure(error, reply); }
   });
 
+  app.get('/api/finance/cashroom/workspace', async (request, reply) => {
+    try { return { workspace: options.store.getFirmCashroomWorkspace(user(request)) }; }
+    catch (error) { return failure(error, reply); }
+  });
+
   app.get('/api/finance/billing/matters/:matterId/bills/:billId', async (request, reply) => {
     try {
       const { matterId, billId } = request.params as Params;
@@ -326,8 +331,10 @@ export const billingCashroomRoutes: FastifyPluginAsync<BillingCashroomRoutesOpti
     try {
       const kind = (request.params as Params).kind;
       if (!['bills', 'cashbook', 'reconciliations'].includes(kind)) throw new BillingCashroomStoreError('NOT_FOUND', 'The export was not found.');
-      const csv = options.store.exportRegister(user(request), kind as 'bills' | 'cashbook' | 'reconciliations');
-      return reply.type('text/csv; charset=utf-8').header('content-disposition', `attachment; filename="${kind}.csv"`).send(csv);
+      const artifact = options.store.exportRegister(user(request), kind as 'bills' | 'cashbook' | 'reconciliations');
+      return reply.type('text/csv; charset=utf-8').header('content-disposition', `attachment; filename="${kind}.csv"`)
+        .header('x-swiftclaim-export-sha256', artifact.sha256)
+        .header('x-swiftclaim-export-manifest', artifact.manifestId).send(artifact.csv);
     } catch (error) { return failure(error, reply); }
   });
 

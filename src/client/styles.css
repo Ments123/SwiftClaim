@@ -31,6 +31,13 @@
   --purple-700: #6e4899;
   --purple-100: #f3ecfa;
   --shadow-sm: 0 1px 2px rgba(13, 23, 40, 0.05);
+  --text: var(--ink-950);
+  --ink: var(--ink-950);
+  --muted: var(--ink-500);
+  --border: var(--line);
+  --accent: var(--blue-700);
+  --accent-soft: var(--blue-100);
+  --surface-muted: #f7f9fb;
   --shadow-md: 0 12px 34px rgba(13, 23, 40, 0.1);
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -4739,3 +4746,54 @@ a {
   .finance-view-header .button-row, .finance-record__actions { width: 100%; }
   .finance-view-header .button, .finance-record__actions .button { flex: 1; }
 }
+/* Firm cashroom */
+.cashroom-page { max-width: 1480px; }
+.cashroom-header { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:24px; }
+.cashroom-header h1 { margin:4px 0 7px; font-size:clamp(2rem,3vw,3rem); letter-spacing:-.045em; }
+.cashroom-header p { margin:0; color:var(--muted); max-width:680px; }
+.cashroom-export-menu { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.cashroom-export-menu .button { font-size:.78rem; padding:9px 11px; }
+.cashroom-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:20px; }
+.cashroom-summary article { border:1px solid var(--border); border-radius:18px; background:var(--surface); padding:18px; display:grid; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center; box-shadow:var(--shadow-sm); }
+.cashroom-summary article>svg { grid-row:1/4; width:38px; height:38px; padding:9px; border-radius:12px; color:var(--accent); background:var(--accent-soft); }
+.cashroom-summary article>span,.cashroom-summary article>small { color:var(--muted); font-size:.78rem; }
+.cashroom-summary article>strong { font-size:1.35rem; letter-spacing:-.025em; }
+.cashroom-summary article.is-attention { border-color:#efb6b6; background:#fffafa; }
+.cashroom-summary article.is-attention>svg { color:#b42318; background:#fee4e2; }
+.cashroom-tabs { display:flex; gap:4px; overflow-x:auto; border-bottom:1px solid var(--border); margin-bottom:14px; scrollbar-width:none; }
+.cashroom-tabs button { border:0; background:transparent; padding:12px 14px; color:var(--muted); font:inherit; font-weight:650; white-space:nowrap; border-bottom:2px solid transparent; cursor:pointer; }
+.cashroom-tabs button.is-active { color:var(--text); border-bottom-color:var(--text); }
+.cashroom-surface { min-height:390px; overflow:hidden; }
+.cashroom-surface>.section-header { padding:22px 24px 18px; border-bottom:1px solid var(--border); }
+.cashroom-filter { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:.8rem; font-weight:650; }
+.cashroom-filter select { border:1px solid var(--border); border-radius:10px; padding:8px 30px 8px 10px; background:var(--surface); color:var(--text); }
+.cashroom-record { border-bottom:1px solid var(--border); }
+.cashroom-record:last-child { border-bottom:0; }
+.cashroom-record__main { width:100%; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:17px 24px; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; }
+.cashroom-record__main:hover { background:var(--surface-muted); }
+.cashroom-record__main span { display:grid; gap:4px; }
+.cashroom-record__main span:last-child { text-align:right; }
+.cashroom-record small,.cashroom-list small,.cashroom-bank-grid small,.cashroom-drilldown small { display:block; color:var(--muted); font-size:.78rem; }
+.cashroom-drilldown { display:grid; grid-template-columns:1fr 1fr auto; align-items:center; gap:18px; padding:16px 24px; background:var(--surface-muted); border-top:1px solid var(--border); }
+.cashroom-drilldown a { color:var(--accent); font-weight:700; font-size:.82rem; }
+.cashroom-list article { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:14px; padding:17px 24px; border-bottom:1px solid var(--border); }
+.cashroom-list article:last-child { border-bottom:0; }
+.cashroom-list article>svg { color:var(--muted); width:20px; }
+.cashroom-list article.is-blocker { background:#fffafa; border-left:3px solid #b42318; }
+.cashroom-list article.is-blocker>svg { color:#b42318; }
+.cashroom-actions { display:flex; gap:8px; }
+.cashroom-bank-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:20px 24px; }
+.cashroom-bank-grid article { position:relative; border:1px solid var(--border); border-radius:16px; padding:20px; display:grid; gap:7px; }
+.cashroom-bank-grid article>svg { position:absolute; right:18px; top:18px; color:var(--muted); }
+.cashroom-bank-grid h3 { margin:4px 35px 0 0; font-size:1rem; }
+.cashroom-bank-grid .status-label { width:max-content; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-size:.68rem; font-weight:750; }
+.cashroom-bank-grid article>strong { font-variant-numeric:tabular-nums; letter-spacing:.08em; }
+.cashroom-statement-lines { border-top:1px solid var(--line); }
+.cashroom-statement-lines article { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; align-items:center; gap:16px; padding:14px 24px; border-bottom:1px solid var(--line); }
+.cashroom-statement-lines article>span { display:grid; gap:3px; }
+.cashroom-boundary,.cashroom-export-evidence { display:flex; gap:10px; align-items:center; color:var(--muted); font-size:.8rem; }
+.cashroom-boundary { margin:18px 24px; padding:13px 15px; border-radius:12px; background:var(--surface-muted); }
+.cashroom-export-evidence { margin-top:14px; justify-content:flex-end; }
+.cashroom-export-evidence span { display:grid; gap:2px; }
+@media (max-width: 980px) { .cashroom-summary { grid-template-columns:repeat(2,1fr); } .cashroom-header { flex-direction:column; } .cashroom-export-menu { justify-content:flex-start; } }
+@media (max-width: 620px) { .cashroom-summary { grid-template-columns:1fr 1fr; } .cashroom-summary article { padding:14px; } .cashroom-summary article>svg { display:none; } .cashroom-summary article>strong { font-size:1.05rem; } .cashroom-surface>.section-header { align-items:flex-start; gap:12px; } .cashroom-filter { align-items:flex-start; flex-direction:column; } .cashroom-record__main,.cashroom-list article { padding:15px 16px; } .cashroom-drilldown { grid-template-columns:1fr; padding:15px 16px; } .cashroom-bank-grid { grid-template-columns:1fr; padding:16px; } .cashroom-export-menu .button { flex:1 1 auto; } }
