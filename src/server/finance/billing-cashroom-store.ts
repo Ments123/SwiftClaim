@@ -1836,8 +1836,17 @@ export class BillingCashroomStore {
       if (input.decision === 'reject' && input.matches.length !== 0) throw new BillingCashroomStoreError('INVALID_STATE', 'A rejected suggestion cannot retain journal matches.');
       if (input.decision === 'confirm' && input.matches.length !== 1) throw new BillingCashroomStoreError('INVALID_STATE', 'A confirmed match requires one journal.');
       if (input.decision === 'split' && input.matches.length < 2) throw new BillingCashroomStoreError('INVALID_STATE', 'A split match requires at least two journals.');
-      const matchedTotal = input.matches.reduce((total, match) => total + match.amountMinor, 0);
-      if (!Number.isSafeInteger(matchedTotal) || (input.decision !== 'reject' && matchedTotal !== Number(line.amountMinor))) {
+      let matchedTotal = 0;
+      for (const match of input.matches) {
+        if (!Number.isSafeInteger(match.amountMinor) || match.amountMinor === 0) {
+          throw new BillingCashroomStoreError('INVALID_STATE', 'Match amounts must be non-zero safe integer minor units.');
+        }
+        matchedTotal += match.amountMinor;
+        if (!Number.isSafeInteger(matchedTotal)) {
+          throw new BillingCashroomStoreError('INVALID_STATE', 'Match amounts exceed safe integer money limits.');
+        }
+      }
+      if (input.decision !== 'reject' && matchedTotal !== Number(line.amountMinor)) {
         throw new BillingCashroomStoreError('INVALID_STATE', 'Confirmed match amounts must equal the exact statement-line amount.');
       }
       const at = this.now().toISOString();
@@ -1848,12 +1857,36 @@ export class BillingCashroomStore {
         insertItem.run(randomUUID(), user.firmId, reconciliationId, input.statementLineId, null,
           Number(line.amountMinor), input.explanation, user.id, at);
       }
+      const matchedJournalIds = new Set(input.matches.map((match) => match.journalId));
+      if (matchedJournalIds.size !== input.matches.length) {
+        throw new BillingCashroomStoreError('CONFLICT', 'A journal can appear only once in an exact match decision.');
+      }
       for (const match of input.matches) {
-        const posted = this.database.prepare(`SELECT 1 FROM finance_journals j WHERE j.id=? AND j.firm_id=? AND EXISTS (
-          SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id AND e.firm_id=j.firm_id AND e.matter_id=j.matter_id
-          AND e.event_type='posted')`).get(match.journalId, user.firmId);
-        if (!posted) throw new BillingCashroomStoreError('INVALID_LINK', 'Only an exact posted journal can be confirmed as a bank match.');
-        if (!Number.isSafeInteger(match.amountMinor) || match.amountMinor === 0) throw new BillingCashroomStoreError('INVALID_STATE', 'Match amounts must be non-zero safe integer minor units.');
+        const bankLines = this.database.prepare(`SELECT l.debit_minor AS debitMinor,l.credit_minor AS creditMinor
+          FROM finance_reconciliations r
+          JOIN finance_bank_accounts b ON b.id=r.bank_account_id AND b.firm_id=r.firm_id
+          JOIN finance_journal_lines l ON l.account_id=b.ledger_account_id AND l.firm_id=b.firm_id
+          JOIN finance_journals j ON j.id=l.journal_id AND j.firm_id=l.firm_id AND j.matter_id=l.matter_id
+          WHERE r.id=? AND r.firm_id=? AND j.id=? AND EXISTS (
+            SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id AND e.firm_id=j.firm_id
+            AND e.matter_id=j.matter_id AND e.event_type='posted')`)
+          .all(reconciliationId, user.firmId, match.journalId) as Row[];
+        let bankMovementMinor = 0;
+        for (const bankLine of bankLines) {
+          bankMovementMinor += Number(bankLine.debitMinor) - Number(bankLine.creditMinor);
+          if (!Number.isSafeInteger(bankMovementMinor)) {
+            throw new BillingCashroomStoreError('INVALID_STATE', 'The posted bank movement exceeds safe integer money limits.');
+          }
+        }
+        if (bankLines.length === 0 || bankMovementMinor !== match.amountMinor) {
+          throw new BillingCashroomStoreError('INVALID_LINK', 'The journal does not contain the exact movement on this reconciled bank ledger.');
+        }
+        if (this.database.prepare(`SELECT 1 FROM finance_reconciliation_items i
+          JOIN finance_reconciliations r ON r.id=i.reconciliation_id AND r.firm_id=i.firm_id
+          WHERE i.firm_id=? AND r.bank_account_id=? AND i.journal_id=? LIMIT 1`)
+          .get(user.firmId, reconciliation.bankAccountId, match.journalId)) {
+          throw new BillingCashroomStoreError('CONFLICT', 'This bank journal already has a retained reconciliation match.');
+        }
         insertItem.run(randomUUID(), user.firmId, reconciliationId, input.statementLineId, match.journalId,
           match.amountMinor, input.explanation, user.id, at);
       }

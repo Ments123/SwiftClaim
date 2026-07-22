@@ -10,15 +10,31 @@ function requireSafeMoney(values: number[]): void {
   if (values.some((value) => !Number.isSafeInteger(value))) throw new Error('Reconciliation money must use safe integer minor units.');
 }
 
+function safeAdd(left: number, right: number): number {
+  const result = left + right;
+  requireSafeMoney([result]);
+  return result;
+}
+
+function safeSubtract(left: number, right: number): number {
+  const result = left - right;
+  requireSafeMoney([result]);
+  return result;
+}
+
 export function calculateReconciliation(input: ReconciliationInput) {
   requireSafeMoney(Object.values(input));
   if (input.outstandingLodgementsMinor < 0 || input.unpresentedPaymentsMinor < 0) {
     throw new Error('Outstanding lodgements and unpresented payments cannot be negative.');
   }
-  const expectedStatementBalanceMinor = input.ledgerClearedBalanceMinor + input.outstandingLodgementsMinor
-    - input.unpresentedPaymentsMinor + input.documentedAdjustmentsMinor;
-  const differenceMinor = input.statementClosingBalanceMinor - expectedStatementBalanceMinor;
-  requireSafeMoney([expectedStatementBalanceMinor, differenceMinor]);
+  const expectedStatementBalanceMinor = safeAdd(
+    safeSubtract(
+      safeAdd(input.ledgerClearedBalanceMinor, input.outstandingLodgementsMinor),
+      input.unpresentedPaymentsMinor,
+    ),
+    input.documentedAdjustmentsMinor,
+  );
+  const differenceMinor = safeSubtract(input.statementClosingBalanceMinor, expectedStatementBalanceMinor);
   return { expectedStatementBalanceMinor, differenceMinor, balanced: differenceMinor === 0 };
 }
 

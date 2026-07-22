@@ -23,6 +23,8 @@ describe('BillingCashroomStore bank reconciliation', () => {
       VALUES (?,?,?,?,?,?,'GBP',1,?,?)`);
     account.run('b0100000-0000-4000-8000-000000000001', finance.firmId, 'CLIENT-BANK-TEST', 'Client bank test', 'client_asset', 'client', finance.id, now().toISOString());
     account.run('b0100000-0000-4000-8000-000000000002', finance.firmId, 'CLIENT-LIABILITY-TEST', 'Client liability test', 'client_liability', 'client', finance.id, now().toISOString());
+    account.run('b0100000-0000-4000-8000-000000000003', finance.firmId, 'UNRELATED-WIP-TEST', 'Unrelated WIP test', 'wip_asset', 'neutral', finance.id, now().toISOString());
+    account.run('b0100000-0000-4000-8000-000000000004', finance.firmId, 'UNRELATED-OFFSET-TEST', 'Unrelated offset test', 'suspense', 'neutral', finance.id, now().toISOString());
     database.prepare(`INSERT INTO finance_bank_accounts
       (id,firm_id,name,designation,ledger_account_id,provider,account_identifier_masked,currency,active,created_by,created_at)
       VALUES ('b1000000-0000-4000-8000-000000000001',?,'Client account','client','b0100000-0000-4000-8000-000000000001','manual','****5678','GBP',1,?,?)`)
@@ -41,7 +43,12 @@ describe('BillingCashroomStore bank reconciliation', () => {
       rawLineHash: 'b'.repeat(64) }],
   };
 
-  function postLedgerJournal(id: string, amountMinor: number) {
+  function postLedgerJournal(
+    id: string,
+    amountMinor: number,
+    debitAccountId = 'b0100000-0000-4000-8000-000000000001',
+    creditAccountId = 'b0100000-0000-4000-8000-000000000002',
+  ) {
     database.prepare(`INSERT OR IGNORE INTO finance_accounting_periods
       (id,firm_id,starts_on,ends_on,status,closed_by,closed_at,created_by,created_at)
       VALUES ('b2000000-0000-4000-8000-000000000001',?,'2026-01-01','2026-12-31','open',NULL,NULL,?,?)`)
@@ -53,8 +60,8 @@ describe('BillingCashroomStore bank reconciliation', () => {
     const line = database.prepare(`INSERT INTO finance_journal_lines
       (id,firm_id,matter_id,journal_id,line_number,account_id,debit_minor,credit_minor,currency,memo)
       VALUES (?,?,?,?,?,?,?,?,'GBP','Reconciliation test line')`);
-    line.run(`${id.slice(0, -2)}${id.at(-1)}3`, finance.firmId, SEED_IDS.northstarMatter, id, 1, 'b0100000-0000-4000-8000-000000000001', amountMinor, 0);
-    line.run(`${id.slice(0, -2)}${id.at(-1)}4`, finance.firmId, SEED_IDS.northstarMatter, id, 2, 'b0100000-0000-4000-8000-000000000002', 0, amountMinor);
+    line.run(`${id.slice(0, -2)}${id.at(-1)}3`, finance.firmId, SEED_IDS.northstarMatter, id, 1, debitAccountId, amountMinor, 0);
+    line.run(`${id.slice(0, -2)}${id.at(-1)}4`, finance.firmId, SEED_IDS.northstarMatter, id, 2, creditAccountId, 0, amountMinor);
     database.prepare(`INSERT INTO finance_journal_events
       (id,firm_id,matter_id,journal_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
       VALUES (?,?,?, ?,1,'posted','Posted test journal.',?,?,?)`)
@@ -150,6 +157,43 @@ describe('BillingCashroomStore bank reconciliation', () => {
     expect(() => store.decideReconciliationMatch(finance, rejectedReconciliation.id, {
       expectedVersion: 2, idempotencyKey: 'reconciliation-reject-002', statementLineId: rejectedBatch.lines[0]!.id,
       decision: 'reject', matches: [], explanation: 'A retained rejection cannot be repeated.', explicitHumanConfirmation: true,
+    }, audit)).toThrowError(expect.objectContaining({ code: 'CONFLICT' }));
+  });
+
+  it('matches only distinct journals with the exact movement on the reconciled bank ledger', () => {
+    const bankJournalId = 'b3000000-0000-4000-8000-000000000006';
+    const unrelatedJournalId = 'b3000000-0000-4000-8000-000000000007';
+    const wrongAmountJournalId = 'b3000000-0000-4000-8000-000000000008';
+    postLedgerJournal(bankJournalId, 100_000);
+    postLedgerJournal(unrelatedJournalId, 100_000,
+      'b0100000-0000-4000-8000-000000000003', 'b0100000-0000-4000-8000-000000000004');
+    const batch = store.importBankStatement(finance, { ...importInput,
+      idempotencyKey: 'statement-import-authority', rawChecksum: '1'.repeat(64),
+      lines: [{ ...importInput.lines[0]!, providerLineId: 'authority-line', rawLineHash: '2'.repeat(64) }] }, audit);
+    const reconciliation = store.prepareReconciliation(finance, {
+      idempotencyKey: 'reconciliation-prepare-authority', bankAccountId: importInput.bankAccountId,
+      statementBatchId: batch.id, ledgerClearedBalanceMinor: 100_000, outstandingLodgementsMinor: 0,
+      unpresentedPaymentsMinor: 0, documentedAdjustmentsMinor: 0, items: [],
+      note: 'Prepared to verify exact journal authority.', explicitHumanConfirmation: true,
+    }, audit);
+    postLedgerJournal(wrongAmountJournalId, 99_999);
+
+    expect(() => store.decideReconciliationMatch(finance, reconciliation.id, {
+      expectedVersion: 1, idempotencyKey: 'reconciliation-unrelated-journal', statementLineId: batch.lines[0]!.id,
+      decision: 'confirm', matches: [{ journalId: unrelatedJournalId, amountMinor: 100_000 }],
+      explanation: 'An unrelated posted journal must not be accepted.', explicitHumanConfirmation: true,
+    }, audit)).toThrowError(expect.objectContaining({ code: 'INVALID_LINK' }));
+    expect(() => store.decideReconciliationMatch(finance, reconciliation.id, {
+      expectedVersion: 1, idempotencyKey: 'reconciliation-wrong-journal-amount', statementLineId: batch.lines[0]!.id,
+      decision: 'confirm', matches: [{ journalId: wrongAmountJournalId, amountMinor: 100_000 }],
+      explanation: 'A mismatched bank movement must not be accepted.', explicitHumanConfirmation: true,
+    }, audit)).toThrowError(expect.objectContaining({ code: 'INVALID_LINK' }));
+    expect(() => store.decideReconciliationMatch(finance, reconciliation.id, {
+      expectedVersion: 1, idempotencyKey: 'reconciliation-duplicate-journal', statementLineId: batch.lines[0]!.id,
+      decision: 'split', matches: [
+        { journalId: bankJournalId, amountMinor: 50_000 },
+        { journalId: bankJournalId, amountMinor: 50_000 },
+      ], explanation: 'The same journal cannot satisfy two split legs.', explicitHumanConfirmation: true,
     }, audit)).toThrowError(expect.objectContaining({ code: 'CONFLICT' }));
   });
 

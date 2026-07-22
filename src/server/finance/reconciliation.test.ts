@@ -45,4 +45,14 @@ describe('manual bank evidence and reconciliation calculations', () => {
     })).toEqual({ expectedStatementBalanceMinor: 125_000, differenceMinor: 0, balanced: true });
     expect(nextReviewDueOn('2026-10-05')).toBe('2026-11-09');
   });
+
+  it('rejects an unsafe intermediate reconciliation balance even when the final value appears safe', () => {
+    expect(() => calculateReconciliation({
+      statementClosingBalanceMinor: Number.MAX_SAFE_INTEGER,
+      ledgerClearedBalanceMinor: Number.MAX_SAFE_INTEGER,
+      outstandingLodgementsMinor: 2,
+      unpresentedPaymentsMinor: 2,
+      documentedAdjustmentsMinor: 0,
+    })).toThrow(/safe integer/i);
+  });
 });
