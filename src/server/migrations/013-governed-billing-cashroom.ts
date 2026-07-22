@@ -133,9 +133,11 @@ const sql = String.raw`
   CREATE TABLE finance_bank_accounts (
     id TEXT PRIMARY KEY, firm_id TEXT NOT NULL, name TEXT NOT NULL,
     designation TEXT NOT NULL CHECK(designation IN ('client','office')),
+    ledger_account_id TEXT NOT NULL,
     provider TEXT NOT NULL, account_identifier_masked TEXT NOT NULL, currency TEXT NOT NULL CHECK(currency='GBP'),
     active INTEGER NOT NULL CHECK(active IN (0,1)), created_by TEXT NOT NULL, created_at TEXT NOT NULL,
     FOREIGN KEY (firm_id) REFERENCES firms(id), FOREIGN KEY (created_by,firm_id) REFERENCES users(id,firm_id),
+    FOREIGN KEY (ledger_account_id,firm_id) REFERENCES finance_accounts(id,firm_id),
     UNIQUE(firm_id,designation,account_identifier_masked), UNIQUE(id,firm_id)
   ) STRICT;
   CREATE TABLE finance_bank_statement_batches (

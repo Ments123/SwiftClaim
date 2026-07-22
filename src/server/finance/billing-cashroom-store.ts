@@ -7,6 +7,7 @@ import type {
   ApproveFinanceClientOfficeTransferInput,
   ApproveFinanceClientPaymentInput,
   IssueFinanceBillInput,
+  ImportFinanceBankStatementInput,
   PostFinanceClientOfficeTransferInput,
   PrepareFinanceClientOfficeTransferInput,
   PrepareFinanceClientPaymentInput,
@@ -23,6 +24,7 @@ import { calculateBillTotals, calculateVat, type VatCalculation, type VatTreatme
 import { projectBill, type BillLifecycleEvent, type BillVersionSnapshot } from './billing.js';
 import { projectCreditImpact } from './billing.js';
 import { projectMatterMoney } from './cashroom.js';
+import { calculateReconciliation, nextReviewDueOn } from './reconciliation.js';
 
 type Row = Record<string, string | number | null>;
 
@@ -70,6 +72,44 @@ export interface IssueCreditNoteInput {
   idempotencyKey: string;
   issuedAt: string;
   explicitHumanApproval: true;
+}
+
+export interface PrepareReconciliationInput {
+  idempotencyKey: string;
+  bankAccountId: string;
+  statementBatchId: string;
+  ledgerClearedBalanceMinor: number;
+  outstandingLodgementsMinor: number;
+  unpresentedPaymentsMinor: number;
+  documentedAdjustmentsMinor: number;
+  items: Array<{
+    itemKind: 'statement_match' | 'outstanding_lodgement' | 'unpresented_payment' | 'adjustment';
+    statementLineId: string | null;
+    journalId: string | null;
+    amountMinor: number;
+    evidenceDocumentVersionId: string | null;
+    explanation: string;
+  }>;
+  note: string;
+  explicitHumanConfirmation: true;
+}
+
+export interface SignoffReconciliationInput {
+  expectedVersion: number;
+  idempotencyKey: string;
+  signedOffAt: string;
+  note: string;
+  explicitHumanApproval: true;
+}
+
+export interface DecideReconciliationMatchInput {
+  expectedVersion: number;
+  idempotencyKey: string;
+  statementLineId: string;
+  decision: 'confirm' | 'split' | 'reject';
+  matches: Array<{ journalId: string; amountMinor: number }>;
+  explanation: string;
+  explicitHumanConfirmation: true;
 }
 
 type PreparedLine = {
@@ -192,9 +232,9 @@ export class BillingCashroomStore {
     );
   }
 
-  private appendFirmOperational(user: SessionUser, action: string, entityId: string, key: string, at: string, safeAfter: Record<string, unknown>, audit: AuditContext): void {
+  private appendFirmOperational(user: SessionUser, action: string, entityId: string, key: string, at: string, safeAfter: Record<string, unknown>, audit: AuditContext, entityType = 'finance_receipt'): void {
     appendAudit(this.database, { firmId: user.firmId, matterId: null, userId: user.id, action,
-      entityType: 'finance_receipt', entityId, after: { entityId, ...safeAfter }, requestId: audit.requestId,
+      entityType, entityId, after: { entityId, ...safeAfter }, requestId: audit.requestId,
       ipAddress: audit.ipAddress, createdAt: at });
     this.database.prepare(`INSERT INTO finance_firm_events
       (id, firm_id, type, actor_user_id, idempotency_key, payload_json, created_at)
@@ -1242,6 +1282,295 @@ export class BillingCashroomStore {
       this.saveReplay(user, matterId, scope, transferId, input.idempotencyKey, input, response, this.now().toISOString());
       this.appendOperational(user, matterId, 'finance.client_office_transfer_posted', transferId, 'Client-to-office transfer posted',
         input.idempotencyKey, at, { billId: transfer.billId, amountMinor: transfer.amountMinor, currency: 'GBP' }, audit, 'finance_transfer');
+      return response;
+    });
+  }
+
+  getBankStatementBatch(user: SessionUser, batchId: string) {
+    this.requireCapability(user, 'finance.read_firm');
+    const row = this.database.prepare(`SELECT id,bank_account_id AS bankAccountId,source,statement_from AS statementFrom,
+      statement_to AS statementTo,opening_balance_minor AS openingBalanceMinor,closing_balance_minor AS closingBalanceMinor,
+      evidence_document_version_id AS evidenceDocumentVersionId,raw_checksum AS rawChecksum,imported_by AS importedBy,
+      imported_at AS importedAt FROM finance_bank_statement_batches WHERE id=? AND firm_id=?`)
+      .get(batchId, user.firmId) as Row | undefined;
+    if (!row) return null;
+    const lines = this.database.prepare(`SELECT id,line_number AS lineNumber,provider_line_id AS providerLineId,
+      transaction_date AS transactionDate,value_date AS valueDate,amount_minor AS amountMinor,reference,
+      payer_payee AS payerPayee,raw_line_hash AS rawLineHash FROM finance_bank_statement_lines
+      WHERE batch_id=? AND firm_id=? ORDER BY line_number`).all(batchId, user.firmId) as Row[];
+    return { id: String(row.id), bankAccountId: String(row.bankAccountId), source: String(row.source),
+      statementFrom: String(row.statementFrom), statementTo: String(row.statementTo),
+      openingBalanceMinor: Number(row.openingBalanceMinor), closingBalanceMinor: Number(row.closingBalanceMinor),
+      currency: 'GBP' as const, evidenceDocumentVersionId: String(row.evidenceDocumentVersionId),
+      rawChecksum: String(row.rawChecksum), importedBy: String(row.importedBy), importedAt: String(row.importedAt),
+      lineCount: lines.length, lines: lines.map((line) => ({ id: String(line.id), lineNumber: Number(line.lineNumber),
+        providerLineId: line.providerLineId ? String(line.providerLineId) : null, transactionDate: String(line.transactionDate),
+        valueDate: line.valueDate ? String(line.valueDate) : null, amountMinor: Number(line.amountMinor),
+        reference: String(line.reference), payerPayee: String(line.payerPayee), rawLineHash: String(line.rawLineHash) })) };
+  }
+
+  importBankStatement(user: SessionUser, input: ImportFinanceBankStatementInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.record_bank_activity');
+    const scope = `import_bank_statement:${input.bankAccountId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getBankStatementBatch>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      if (!this.database.prepare(`SELECT 1 FROM finance_bank_accounts WHERE id=? AND firm_id=? AND active=1 AND currency='GBP'`)
+        .get(input.bankAccountId, user.firmId)) throw new BillingCashroomStoreError('NOT_FOUND', 'The bank account was not found.');
+      if (!this.exactEvidence(user.firmId, input.evidenceDocumentVersionId)) throw new BillingCashroomStoreError('INVALID_LINK', 'Exact statement evidence was not found.');
+      if (input.statementTo < input.statementFrom) throw new BillingCashroomStoreError('INVALID_STATE', 'The statement closing date cannot precede its opening date.');
+      if (this.database.prepare(`SELECT 1 FROM finance_bank_statement_batches WHERE firm_id=? AND bank_account_id=? AND raw_checksum=?`)
+        .get(user.firmId, input.bankAccountId, input.rawChecksum)) throw new BillingCashroomStoreError('CONFLICT', 'This exact statement evidence was already imported.');
+      const lineNumbers = new Set<number>();
+      const providerIds = new Set<string>();
+      const rawHashes = new Set<string>();
+      let movementMinor = 0;
+      for (const line of input.lines) {
+        if (line.transactionDate < input.statementFrom || line.transactionDate > input.statementTo) {
+          throw new BillingCashroomStoreError('INVALID_STATE', 'Every statement line must fall within the exact statement period.');
+        }
+        movementMinor += line.amountMinor;
+        if (!Number.isSafeInteger(movementMinor)) throw new BillingCashroomStoreError('INVALID_STATE', 'Statement movements exceed safe integer money limits.');
+        if (lineNumbers.has(line.lineNumber) || rawHashes.has(line.rawLineHash) || (line.providerLineId && providerIds.has(line.providerLineId))) {
+          throw new BillingCashroomStoreError('CONFLICT', 'The statement contains a duplicate line.');
+        }
+        lineNumbers.add(line.lineNumber); rawHashes.add(line.rawLineHash);
+        if (line.providerLineId) providerIds.add(line.providerLineId);
+        const existing = this.database.prepare(`SELECT 1 FROM finance_bank_statement_lines WHERE firm_id=? AND bank_account_id=?
+          AND (raw_line_hash=? OR (? IS NOT NULL AND provider_line_id=?))`).get(user.firmId, input.bankAccountId,
+          line.rawLineHash, line.providerLineId, line.providerLineId);
+        if (existing) throw new BillingCashroomStoreError('CONFLICT', 'A statement line with the same provider identity or raw evidence already exists.');
+      }
+      const derivedClosingMinor = input.openingBalanceMinor + movementMinor;
+      if (!Number.isSafeInteger(derivedClosingMinor) || derivedClosingMinor !== input.closingBalanceMinor) {
+        throw new BillingCashroomStoreError('INVALID_STATE', 'Opening balance plus exact statement movements must equal the closing balance.');
+      }
+      const id = randomUUID();
+      const at = this.now().toISOString();
+      this.database.prepare(`INSERT INTO finance_bank_statement_batches
+        (id,firm_id,bank_account_id,source,statement_from,statement_to,opening_balance_minor,closing_balance_minor,
+          currency,evidence_document_version_id,raw_checksum,imported_by,imported_at)
+        VALUES (?,?,?,'csv',?,?,?,?,'GBP',?,?,?,?)`).run(id, user.firmId, input.bankAccountId,
+        input.statementFrom, input.statementTo, input.openingBalanceMinor, input.closingBalanceMinor,
+        input.evidenceDocumentVersionId, input.rawChecksum, user.id, at);
+      const insert = this.database.prepare(`INSERT INTO finance_bank_statement_lines
+        (id,firm_id,bank_account_id,batch_id,line_number,provider_line_id,transaction_date,value_date,amount_minor,
+          currency,reference,payer_payee,raw_line_hash) VALUES (?,?,?,?,?,?,?,?,?,'GBP',?,?,?)`);
+      for (const line of input.lines) insert.run(randomUUID(), user.firmId, input.bankAccountId, id, line.lineNumber,
+        line.providerLineId, line.transactionDate, line.valueDate, line.amountMinor, line.reference, line.payerPayee, line.rawLineHash);
+      const response = this.getBankStatementBatch(user, id)!;
+      this.saveFirmReplay(user, scope, id, input.idempotencyKey, input, response, at);
+      this.appendFirmOperational(user, 'finance.bank_statement_imported', id, input.idempotencyKey, at,
+        { bankAccountId: input.bankAccountId, statementTo: input.statementTo, lineCount: input.lines.length,
+          closingBalanceMinor: input.closingBalanceMinor, currency: 'GBP', rawChecksum: input.rawChecksum }, audit, 'finance_bank_statement_batch');
+      return response;
+    });
+  }
+
+  getReconciliation(user: SessionUser, reconciliationId: string) {
+    this.requireCapability(user, 'finance.read_firm');
+    const row = this.database.prepare(`SELECT id,bank_account_id AS bankAccountId,statement_batch_id AS statementBatchId,
+      statement_closing_on AS statementClosingOn,statement_closing_balance_minor AS statementClosingBalanceMinor,
+      ledger_cleared_balance_minor AS ledgerClearedBalanceMinor,outstanding_lodgements_minor AS outstandingLodgementsMinor,
+      unpresented_payments_minor AS unpresentedPaymentsMinor,documented_adjustments_minor AS documentedAdjustmentsMinor,
+      difference_minor AS differenceMinor,prepared_by AS preparedBy,prepared_at AS preparedAt
+      FROM finance_reconciliations WHERE id=? AND firm_id=?`).get(reconciliationId, user.firmId) as Row | undefined;
+    if (!row) return null;
+    const events = this.database.prepare(`SELECT sequence,event_type AS eventType,note,occurred_at AS occurredAt,
+      recorded_by AS recordedBy FROM finance_reconciliation_events WHERE reconciliation_id=? AND firm_id=? ORDER BY sequence`)
+      .all(reconciliationId, user.firmId) as Row[];
+    const items = this.database.prepare(`SELECT id,item_kind AS itemKind,statement_line_id AS statementLineId,
+      journal_id AS journalId,amount_minor AS amountMinor,evidence_document_version_id AS evidenceDocumentVersionId,
+      explanation,created_by AS createdBy,created_at AS createdAt FROM finance_reconciliation_items
+      WHERE reconciliation_id=? AND firm_id=? ORDER BY created_at,id`).all(reconciliationId, user.firmId) as Row[];
+    const signoff = this.database.prepare(`SELECT signed_off_by AS signedOffBy,signed_off_at AS signedOffAt,note,
+      next_review_due_on AS nextReviewDueOn,calculation_snapshot_json AS calculationSnapshotJson
+      FROM finance_reconciliation_signoffs WHERE reconciliation_id=? AND firm_id=?`).get(reconciliationId, user.firmId) as Row | undefined;
+    const completed = events.some((event) => event.eventType === 'completed');
+    return { id: String(row.id), bankAccountId: String(row.bankAccountId), statementBatchId: String(row.statementBatchId),
+      statementClosingOn: String(row.statementClosingOn), statementClosingBalanceMinor: Number(row.statementClosingBalanceMinor),
+      ledgerClearedBalanceMinor: Number(row.ledgerClearedBalanceMinor), outstandingLodgementsMinor: Number(row.outstandingLodgementsMinor),
+      unpresentedPaymentsMinor: Number(row.unpresentedPaymentsMinor), documentedAdjustmentsMinor: Number(row.documentedAdjustmentsMinor),
+      differenceMinor: Number(row.differenceMinor), currency: 'GBP' as const, preparedBy: String(row.preparedBy),
+      preparedAt: String(row.preparedAt), version: events.length, status: signoff ? 'signed_off' : completed ? 'completed' : 'prepared',
+      nextReviewDueOn: signoff ? String(signoff.nextReviewDueOn) : null,
+      signoff: signoff ? { signedOffBy: String(signoff.signedOffBy), signedOffAt: String(signoff.signedOffAt), note: String(signoff.note),
+        calculationSnapshot: JSON.parse(String(signoff.calculationSnapshotJson)) as unknown } : null,
+      items: items.map((item) => ({ id: String(item.id), itemKind: String(item.itemKind),
+        statementLineId: item.statementLineId ? String(item.statementLineId) : null,
+        journalId: item.journalId ? String(item.journalId) : null, amountMinor: Number(item.amountMinor),
+        evidenceDocumentVersionId: item.evidenceDocumentVersionId ? String(item.evidenceDocumentVersionId) : null,
+        explanation: String(item.explanation), createdBy: String(item.createdBy), createdAt: String(item.createdAt) })), events };
+  }
+
+  prepareReconciliation(user: SessionUser, input: PrepareReconciliationInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.prepare_reconciliation');
+    const scope = `prepare_reconciliation:${input.bankAccountId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getReconciliation>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const batch = this.getBankStatementBatch(user, input.statementBatchId);
+      if (!batch || batch.bankAccountId !== input.bankAccountId) throw new BillingCashroomStoreError('NOT_FOUND', 'The exact statement batch was not found for this bank account.');
+      if (this.database.prepare(`SELECT 1 FROM finance_reconciliations WHERE firm_id=? AND bank_account_id=? AND statement_batch_id=?`)
+        .get(user.firmId, input.bankAccountId, input.statementBatchId)) throw new BillingCashroomStoreError('CONFLICT', 'This statement batch already has a reconciliation.');
+      const ledger = this.database.prepare(`SELECT COALESCE(SUM(l.debit_minor-l.credit_minor),0) AS balanceMinor
+        FROM finance_bank_accounts b JOIN finance_journal_lines l ON l.account_id=b.ledger_account_id AND l.firm_id=b.firm_id
+        JOIN finance_journals j ON j.id=l.journal_id AND j.firm_id=l.firm_id AND j.matter_id=l.matter_id
+        WHERE b.id=? AND b.firm_id=? AND j.accounting_date<=? AND EXISTS (
+          SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id AND e.firm_id=j.firm_id
+          AND e.matter_id=j.matter_id AND e.event_type='posted')`).get(input.bankAccountId, user.firmId, batch.statementTo) as Row;
+      const derivedLedgerBalanceMinor = Number(ledger.balanceMinor);
+      if (!Number.isSafeInteger(derivedLedgerBalanceMinor) || derivedLedgerBalanceMinor !== input.ledgerClearedBalanceMinor) {
+        throw new BillingCashroomStoreError('CONFLICT', 'The supplied ledger balance no longer matches the exact posted ledger at the statement closing date.');
+      }
+      let calculation;
+      try {
+        calculation = calculateReconciliation({ statementClosingBalanceMinor: batch.closingBalanceMinor,
+          ledgerClearedBalanceMinor: derivedLedgerBalanceMinor, outstandingLodgementsMinor: input.outstandingLodgementsMinor,
+          unpresentedPaymentsMinor: input.unpresentedPaymentsMinor, documentedAdjustmentsMinor: input.documentedAdjustmentsMinor });
+      } catch (error) { throw new BillingCashroomStoreError('INVALID_STATE', error instanceof Error ? error.message : 'The reconciliation calculation is invalid.'); }
+      const id = randomUUID();
+      const at = this.now().toISOString();
+      this.database.prepare(`INSERT INTO finance_reconciliations
+        (id,firm_id,bank_account_id,statement_batch_id,statement_closing_on,statement_closing_balance_minor,
+          ledger_cleared_balance_minor,outstanding_lodgements_minor,unpresented_payments_minor,documented_adjustments_minor,
+          difference_minor,currency,prepared_by,prepared_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'GBP',?,?)`)
+        .run(id, user.firmId, input.bankAccountId, input.statementBatchId, batch.statementTo, batch.closingBalanceMinor,
+          derivedLedgerBalanceMinor, input.outstandingLodgementsMinor, input.unpresentedPaymentsMinor,
+          input.documentedAdjustmentsMinor, calculation.differenceMinor, user.id, at);
+      const lineIds = new Set(batch.lines.map((line) => line.id));
+      const insertItem = this.database.prepare(`INSERT INTO finance_reconciliation_items
+        (id,firm_id,reconciliation_id,item_kind,statement_line_id,journal_id,amount_minor,evidence_document_version_id,
+          explanation,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      for (const item of input.items) {
+        if (!Number.isSafeInteger(item.amountMinor) || item.amountMinor === 0 || (item.statementLineId && !lineIds.has(item.statementLineId))) {
+          throw new BillingCashroomStoreError('INVALID_LINK', 'A reconciliation item does not belong to the exact statement snapshot.');
+        }
+        if (item.journalId && !this.database.prepare(`SELECT 1 FROM finance_journals WHERE id=? AND firm_id=?`).get(item.journalId, user.firmId)) {
+          throw new BillingCashroomStoreError('INVALID_LINK', 'A reconciliation journal was not found.');
+        }
+        if (item.evidenceDocumentVersionId && !this.exactEvidence(user.firmId, item.evidenceDocumentVersionId)) {
+          throw new BillingCashroomStoreError('INVALID_LINK', 'Exact reconciliation adjustment evidence was not found.');
+        }
+        insertItem.run(randomUUID(), user.firmId, id, item.itemKind, item.statementLineId, item.journalId,
+          item.amountMinor, item.evidenceDocumentVersionId, item.explanation, user.id, at);
+      }
+      this.database.prepare(`INSERT INTO finance_reconciliation_events
+        (id,firm_id,reconciliation_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,1,'prepared',?,?,?,?)`).run(randomUUID(), user.firmId, id, input.note, at, user.id, at);
+      const response = this.getReconciliation(user, id)!;
+      this.saveFirmReplay(user, scope, id, input.idempotencyKey, input, response, at);
+      this.appendFirmOperational(user, 'finance.reconciliation_prepared', id, input.idempotencyKey, at,
+        { bankAccountId: input.bankAccountId, statementBatchId: input.statementBatchId,
+          differenceMinor: calculation.differenceMinor, currency: 'GBP' }, audit, 'finance_reconciliation');
+      return response;
+    });
+  }
+
+  decideReconciliationMatch(user: SessionUser, reconciliationId: string, input: DecideReconciliationMatchInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.prepare_reconciliation');
+    const scope = `decide_reconciliation_match:${reconciliationId}:${input.statementLineId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getReconciliation>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const reconciliation = this.getReconciliation(user, reconciliationId);
+      if (!reconciliation) throw new BillingCashroomStoreError('NOT_FOUND', 'The reconciliation was not found.');
+      if (reconciliation.version !== input.expectedVersion || reconciliation.status !== 'prepared') {
+        throw new BillingCashroomStoreError('CONFLICT', 'The reconciliation version or state is stale.');
+      }
+      const line = this.database.prepare(`SELECT amount_minor AS amountMinor FROM finance_bank_statement_lines
+        WHERE id=? AND firm_id=? AND batch_id=? AND bank_account_id=?`).get(input.statementLineId, user.firmId,
+        reconciliation.statementBatchId, reconciliation.bankAccountId) as Row | undefined;
+      if (!line) throw new BillingCashroomStoreError('INVALID_LINK', 'The statement line does not belong to this reconciliation.');
+      if (reconciliation.items.some((item) => item.statementLineId === input.statementLineId)) {
+        throw new BillingCashroomStoreError('CONFLICT', 'This statement line already has a retained match decision.');
+      }
+      if (input.decision === 'reject' && input.matches.length !== 0) throw new BillingCashroomStoreError('INVALID_STATE', 'A rejected suggestion cannot retain journal matches.');
+      if (input.decision === 'confirm' && input.matches.length !== 1) throw new BillingCashroomStoreError('INVALID_STATE', 'A confirmed match requires one journal.');
+      if (input.decision === 'split' && input.matches.length < 2) throw new BillingCashroomStoreError('INVALID_STATE', 'A split match requires at least two journals.');
+      const matchedTotal = input.matches.reduce((total, match) => total + match.amountMinor, 0);
+      if (!Number.isSafeInteger(matchedTotal) || (input.decision !== 'reject' && matchedTotal !== Number(line.amountMinor))) {
+        throw new BillingCashroomStoreError('INVALID_STATE', 'Confirmed match amounts must equal the exact statement-line amount.');
+      }
+      const at = this.now().toISOString();
+      const insertItem = this.database.prepare(`INSERT INTO finance_reconciliation_items
+        (id,firm_id,reconciliation_id,item_kind,statement_line_id,journal_id,amount_minor,evidence_document_version_id,
+          explanation,created_by,created_at) VALUES (?, ?, ?, 'statement_match', ?, ?, ?, NULL, ?, ?, ?)`);
+      for (const match of input.matches) {
+        const posted = this.database.prepare(`SELECT 1 FROM finance_journals j WHERE j.id=? AND j.firm_id=? AND EXISTS (
+          SELECT 1 FROM finance_journal_events e WHERE e.journal_id=j.id AND e.firm_id=j.firm_id AND e.matter_id=j.matter_id
+          AND e.event_type='posted')`).get(match.journalId, user.firmId);
+        if (!posted) throw new BillingCashroomStoreError('INVALID_LINK', 'Only an exact posted journal can be confirmed as a bank match.');
+        if (!Number.isSafeInteger(match.amountMinor) || match.amountMinor === 0) throw new BillingCashroomStoreError('INVALID_STATE', 'Match amounts must be non-zero safe integer minor units.');
+        insertItem.run(randomUUID(), user.firmId, reconciliationId, input.statementLineId, match.journalId,
+          match.amountMinor, input.explanation, user.id, at);
+      }
+      this.database.prepare(`INSERT INTO finance_reconciliation_events
+        (id,firm_id,reconciliation_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,?,?,?, ?,?)`).run(randomUUID(), user.firmId, reconciliationId, reconciliation.version + 1,
+        input.decision === 'reject' ? 'item_rejected' : 'item_matched', input.explanation, at, user.id, at);
+      const response = this.getReconciliation(user, reconciliationId)!;
+      this.saveFirmReplay(user, scope, reconciliationId, input.idempotencyKey, input, response, at);
+      this.appendFirmOperational(user, `finance.reconciliation_match_${input.decision}`, reconciliationId,
+        input.idempotencyKey, at, { statementLineId: input.statementLineId, decision: input.decision,
+          matchCount: input.matches.length, amountMinor: Number(line.amountMinor), currency: 'GBP' }, audit, 'finance_reconciliation');
+      return response;
+    });
+  }
+
+  completeReconciliation(user: SessionUser, reconciliationId: string, input: { expectedVersion: number; idempotencyKey: string; completedAt: string; explicitHumanConfirmation: true }, audit: AuditContext) {
+    this.requireCapability(user, 'finance.prepare_reconciliation');
+    const scope = `complete_reconciliation:${reconciliationId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getReconciliation>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const reconciliation = this.getReconciliation(user, reconciliationId);
+      if (!reconciliation) throw new BillingCashroomStoreError('NOT_FOUND', 'The reconciliation was not found.');
+      if (reconciliation.version !== input.expectedVersion || reconciliation.status !== 'prepared') throw new BillingCashroomStoreError('CONFLICT', 'The reconciliation version or state is stale.');
+      if (reconciliation.differenceMinor !== 0) throw new BillingCashroomStoreError('INVALID_STATE', 'A reconciliation with a difference cannot be completed.');
+      const completedAt = isoTimestamp(input.completedAt, 'Reconciliation completion timestamp');
+      if (Date.parse(completedAt) <= Date.parse(reconciliation.preparedAt)) throw new BillingCashroomStoreError('INVALID_STATE', 'Reconciliation completion must occur after preparation.');
+      this.database.prepare(`INSERT INTO finance_reconciliation_events
+        (id,firm_id,reconciliation_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?, 'completed','Zero-difference reconciliation frozen for independent sign-off.',?,?,?)`)
+        .run(randomUUID(), user.firmId, reconciliationId, reconciliation.version + 1, completedAt, user.id, this.now().toISOString());
+      const response = this.getReconciliation(user, reconciliationId)!;
+      this.saveFirmReplay(user, scope, reconciliationId, input.idempotencyKey, input, response, this.now().toISOString());
+      this.appendFirmOperational(user, 'finance.reconciliation_completed', reconciliationId, input.idempotencyKey, completedAt,
+        { bankAccountId: reconciliation.bankAccountId, statementBatchId: reconciliation.statementBatchId, differenceMinor: 0, currency: 'GBP' }, audit, 'finance_reconciliation');
+      return response;
+    });
+  }
+
+  signoffReconciliation(user: SessionUser, reconciliationId: string, input: SignoffReconciliationInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.signoff_reconciliation');
+    const scope = `signoff_reconciliation:${reconciliationId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getReconciliation>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const reconciliation = this.getReconciliation(user, reconciliationId);
+      if (!reconciliation) throw new BillingCashroomStoreError('NOT_FOUND', 'The reconciliation was not found.');
+      if (reconciliation.preparedBy === user.id) throw new BillingCashroomStoreError('INDEPENDENCE_REQUIRED', 'Reconciliation sign-off requires a person other than the preparer.');
+      if (reconciliation.version !== input.expectedVersion || reconciliation.status !== 'completed') throw new BillingCashroomStoreError('CONFLICT', 'Only the exact completed reconciliation can be signed off.');
+      const completed = reconciliation.events.find((event) => event.eventType === 'completed');
+      const signedOffAt = isoTimestamp(input.signedOffAt, 'Reconciliation sign-off timestamp');
+      if (!completed || Date.parse(signedOffAt) <= Date.parse(String(completed.occurredAt))) throw new BillingCashroomStoreError('INVALID_STATE', 'Reconciliation sign-off must occur after completion.');
+      const snapshot = { bankAccountId: reconciliation.bankAccountId, statementBatchId: reconciliation.statementBatchId,
+        statementClosingOn: reconciliation.statementClosingOn, statementClosingBalanceMinor: reconciliation.statementClosingBalanceMinor,
+        ledgerClearedBalanceMinor: reconciliation.ledgerClearedBalanceMinor,
+        outstandingLodgementsMinor: reconciliation.outstandingLodgementsMinor,
+        unpresentedPaymentsMinor: reconciliation.unpresentedPaymentsMinor,
+        documentedAdjustmentsMinor: reconciliation.documentedAdjustmentsMinor, differenceMinor: reconciliation.differenceMinor,
+        itemIds: reconciliation.items.map((item) => item.id), completedEventSequence: Number(completed.sequence) };
+      this.database.prepare(`INSERT INTO finance_reconciliation_signoffs
+        (id,firm_id,reconciliation_id,signed_off_by,signed_off_at,note,next_review_due_on,calculation_snapshot_json)
+        VALUES (?,?,?,?,?,?,?,?)`).run(randomUUID(), user.firmId, reconciliationId, user.id, signedOffAt, input.note,
+        nextReviewDueOn(reconciliation.statementClosingOn), canonical(snapshot));
+      const response = this.getReconciliation(user, reconciliationId)!;
+      this.saveFirmReplay(user, scope, reconciliationId, input.idempotencyKey, input, response, this.now().toISOString());
+      this.appendFirmOperational(user, 'finance.reconciliation_signed_off', reconciliationId, input.idempotencyKey, signedOffAt,
+        { bankAccountId: reconciliation.bankAccountId, statementBatchId: reconciliation.statementBatchId,
+          nextReviewDueOn: response.nextReviewDueOn, differenceMinor: 0, currency: 'GBP' }, audit, 'finance_reconciliation');
       return response;
     });
   }

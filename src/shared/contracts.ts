@@ -2666,6 +2666,12 @@ export const importFinanceBankStatementSchema = z.object({
   openingBalanceMinor: financeMoneySchema, closingBalanceMinor: financeMoneySchema,
   currency: financeCurrencySchema, evidenceDocumentVersionId: financeUuidSchema,
   rawChecksum: z.string().regex(/^[a-f0-9]{64}$/),
+  lines: z.array(z.object({
+    lineNumber: z.number().int().positive(), providerLineId: z.string().trim().min(1).max(300).nullable(),
+    transactionDate: z.iso.date(), valueDate: z.iso.date().nullable(), amountMinor: financeMoneySchema.refine((value) => value !== 0),
+    reference: z.string().trim().min(1).max(500), payerPayee: z.string().trim().min(1).max(500),
+    rawLineHash: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict()).min(1).max(100_000),
 }).strict();
 export const recordFinanceReceiptSchema = z.object({
   idempotencyKey: financeCommandKeySchema, bankAccountId: financeUuidSchema,

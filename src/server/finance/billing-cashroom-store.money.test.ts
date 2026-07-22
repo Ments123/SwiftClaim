@@ -37,8 +37,8 @@ describe('BillingCashroomStore money movements', () => {
       VALUES ('a1200000-0000-4000-8000-000000000001',?,'2026-01-01','2026-12-31','open',NULL,NULL,?,?)`)
       .run(finance.firmId, finance.id, now().toISOString());
     database.prepare(`INSERT INTO finance_bank_accounts
-      (id,firm_id,name,designation,provider,account_identifier_masked,currency,active,created_by,created_at)
-      VALUES ('a1300000-0000-4000-8000-000000000001',?,'Client account','client','manual','****1234','GBP',1,?,?)`)
+      (id,firm_id,name,designation,ledger_account_id,provider,account_identifier_masked,currency,active,created_by,created_at)
+      VALUES ('a1300000-0000-4000-8000-000000000001',?,'Client account','client','a1100000-0000-4000-8000-000000000001','manual','****1234','GBP',1,?,?)`)
       .run(finance.firmId, finance.id, now().toISOString());
     database.prepare(`INSERT INTO finance_bill_series
       (id,firm_id,prefix,year_pattern,next_number,padding,active,created_by,created_at)
