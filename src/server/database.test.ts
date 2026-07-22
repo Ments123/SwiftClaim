@@ -216,6 +216,11 @@ describe('canonical database', () => {
         name: 'governed finance foundation',
         checksumLength: 64,
       },
+      {
+        version: 13,
+        name: 'governed billing and cashroom',
+        checksumLength: 64,
+      },
     ]);
   });
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 import { EvaluationCommunicationProvider } from './communications/evaluation-provider.js';
@@ -7,6 +8,7 @@ import { CommunicationStore } from './communications/store.js';
 import { DisclosureService } from './disclosure/service.js';
 import { DisclosureStore } from './disclosure/store.js';
 import { suggestTimeFromActivity } from './finance/activity.js';
+import { BillingCashroomStore, type GeneratedBillWriter } from './finance/billing-cashroom-store.js';
 import { FinanceService } from './finance/service.js';
 import { FinanceStore } from './finance/store.js';
 import { migrations, runMigrations } from './migrations/index.js';
@@ -3141,5 +3143,254 @@ export function seedFinanceEvaluation(database: DatabaseSync): void {
     idempotencyKey: 'seed-finance-post-wip-journal',
     postedAt: '2026-10-02T13:00:00.000Z',
     explicitHumanConfirmation: true,
+  }, audit);
+}
+
+export function seedBillingCashroomEvaluation(
+  database: DatabaseSync,
+  writeGeneratedBill?: GeneratedBillWriter,
+): void {
+  let currentNow = '2026-10-05T09:00:00.000Z';
+  const now = () => new Date(currentNow);
+  const ava: SessionUser = {
+    id: SEED_IDS.ava, firmId: SEED_IDS.northstarFirm, firmName: 'Northstar Legal',
+    email: 'ava@northstar.test', name: 'Ava Morgan', role: 'solicitor',
+  };
+  const partner: SessionUser = {
+    ...ava, id: SEED_IDS.partner, email: 'partner@northstar.test', name: 'Marcus Reed', role: 'partner',
+  };
+  const finance: SessionUser = {
+    ...ava, id: SEED_IDS.finance, email: 'finance@northstar.test', name: 'Priya Shah', role: 'finance',
+  };
+  const matterId = SEED_IDS.northstarMatter;
+  const audit = { requestId: 'seed-billing-cashroom', ipAddress: '127.0.0.1' };
+
+  const account = database.prepare(`INSERT OR IGNORE INTO finance_accounts (
+    id,firm_id,code,name,account_class,designation,currency,active,created_by,created_at
+  ) VALUES (?,?,?,?,?,?,'GBP',1,?,?)`);
+  account.run('94000000-0000-4000-8000-000000000001', finance.firmId, 'TRADE-DEBTORS', 'Trade debtors', 'office_asset', 'office', finance.id, currentNow);
+  account.run('94000000-0000-4000-8000-000000000002', finance.firmId, 'FEE-INCOME', 'Fee and disbursement recovery income', 'income', 'office', finance.id, currentNow);
+  account.run('94000000-0000-4000-8000-000000000003', finance.firmId, 'VAT-CONTROL', 'VAT control', 'vat_control', 'office', finance.id, currentNow);
+  account.run('94000000-0000-4000-8000-000000000004', finance.firmId, 'CLIENT-BANK', 'Client bank', 'client_asset', 'client', finance.id, currentNow);
+  account.run('94000000-0000-4000-8000-000000000005', finance.firmId, 'CLIENT-LIABILITY', 'Client liability', 'client_liability', 'client', finance.id, currentNow);
+  account.run('94000000-0000-4000-8000-000000000006', finance.firmId, 'OFFICE-BANK', 'Office bank', 'office_asset', 'office', finance.id, currentNow);
+  account.run('94000000-0000-4000-8000-000000000007', finance.firmId, 'SUSPENSE', 'Cashroom suspense', 'suspense', 'neutral', finance.id, currentNow);
+  database.prepare(`INSERT OR IGNORE INTO finance_vat_profiles (
+    id,firm_id,name,registration_number_masked,created_by,created_at
+  ) VALUES ('95000000-0000-4000-8000-000000000001',?,'Northstar VAT','GB *** 1234',?,?)`)
+    .run(finance.firmId, finance.id, currentNow);
+  database.prepare(`INSERT OR IGNORE INTO finance_vat_rates (
+    id,firm_id,vat_profile_id,treatment,rate_numerator,rate_denominator,effective_from,effective_to,note,approved_by,approved_at
+  ) VALUES ('95000000-0000-4000-8000-000000000002',?,'95000000-0000-4000-8000-000000000001','standard',20,100,
+    '2026-01-01',NULL,'Approved UK standard VAT rate for the synthetic evaluation.',?,'2026-01-01T00:00:00.000Z')`)
+    .run(finance.firmId, partner.id);
+  database.prepare(`INSERT OR IGNORE INTO finance_bill_series (
+    id,firm_id,prefix,year_pattern,next_number,padding,active,created_by,created_at
+  ) VALUES ('95000000-0000-4000-8000-000000000003',?,'SC-','YYYY-',1,6,1,?,?)`)
+    .run(finance.firmId, finance.id, currentNow);
+  database.prepare(`INSERT OR IGNORE INTO finance_bank_accounts (
+    id,firm_id,name,designation,ledger_account_id,provider,account_identifier_masked,currency,active,created_by,created_at
+  ) VALUES ('95000000-0000-4000-8000-000000000004',?,'Northstar client account','client',
+    '94000000-0000-4000-8000-000000000004','manual','****5678','GBP',1,?,?)`)
+    .run(finance.firmId, finance.id, currentNow);
+
+  const evaluationWriter: GeneratedBillWriter = writeGeneratedBill ?? ((document) => {
+    const bytes = new TextEncoder().encode(document.content);
+    return {
+      ...document,
+      storageKey: `evaluation/billing/${document.billReference}.html`,
+      sizeBytes: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    };
+  });
+  const store = new BillingCashroomStore(database, now, evaluationWriter);
+  const time = database.prepare(`SELECT a.time_entry_id AS id,a.charge_minor AS netMinor
+    FROM finance_time_approvals a JOIN finance_time_entry_events e
+      ON e.time_entry_id=a.time_entry_id AND e.firm_id=a.firm_id AND e.matter_id=a.matter_id
+    WHERE a.firm_id=? AND a.matter_id=? AND e.event_type='approved' ORDER BY a.approved_at,a.id LIMIT 1`)
+    .get(finance.firmId, matterId) as { id: string; netMinor: number } | undefined;
+  const disbursement = database.prepare(`SELECT d.id,d.net_minor AS netMinor FROM finance_disbursements d
+    WHERE d.firm_id=? AND d.matter_id=? AND (SELECT e.event_type FROM finance_disbursement_events e
+      WHERE e.disbursement_id=d.id AND e.firm_id=d.firm_id AND e.matter_id=d.matter_id
+      ORDER BY e.sequence DESC LIMIT 1)='incurred' ORDER BY d.created_at,d.id LIMIT 1`)
+    .get(finance.firmId, matterId) as { id: string; netMinor: number } | undefined;
+  if (!time || !disbursement) return;
+
+  const prepared = store.prepareBill(ava, matterId, {
+    idempotencyKey: 'seed-billing-prepare-bill', clientPartyId: SEED_IDS.northstarClient, dueOn: '2026-11-04',
+    sourceEntries: [
+      { sourceKind: 'time', sourceId: time.id, netMinor: time.netMinor, narrative: 'Approved housing conditions legal work' },
+      { sourceKind: 'disbursement', sourceId: disbursement.id, netMinor: disbursement.netMinor, narrative: 'Court issue fee incurred for this matter' },
+    ],
+    adjustments: [{ adjustmentKind: 'reduction', sourceId: time.id, amountMinor: 2_000, reason: 'Partner-approved reduction before billing.' }],
+  }, audit);
+  currentNow = '2026-10-05T09:05:00.000Z';
+  const submitted = store.submitBill(ava, matterId, prepared.id, {
+    expectedVersion: prepared.version, idempotencyKey: 'seed-billing-submit-bill',
+    note: 'Ava checked the exact sources, narratives and explicit reduction.', explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-05T09:10:00.000Z';
+  const approved = store.approveBill(partner, matterId, prepared.id, {
+    expectedVersion: submitted.version, idempotencyKey: 'seed-billing-approve-bill',
+    approvedAt: currentNow, note: 'Marcus independently approved the exact submitted bill version.', explicitHumanApproval: true,
+  }, audit);
+  currentNow = '2026-10-05T09:15:00.000Z';
+  const issued = store.issueBill(finance, matterId, prepared.id, {
+    expectedVersion: approved.version, idempotencyKey: 'seed-billing-issue-bill', taxPoint: '2026-10-05',
+    explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-05T09:20:00.000Z';
+  store.recordBillDelivery(finance, matterId, prepared.id, {
+    expectedVersion: issued.version, idempotencyKey: 'seed-billing-deliver-bill', deliveredAt: currentNow,
+    channel: 'email', recipient: 'Maya Clarke', evidenceDocumentVersionId: SEED_IDS.complaintVersion,
+    explicitHumanConfirmation: true,
+  }, audit);
+
+  currentNow = '2026-10-05T10:00:00.000Z';
+  const receipt = store.recordReceipt(finance, {
+    idempotencyKey: 'seed-cashroom-record-client-receipt', bankAccountId: '95000000-0000-4000-8000-000000000004',
+    statementLineId: null, amountMinor: 70_000, receivedOn: '2026-10-05', payer: 'Maya Clarke',
+    reference: 'Client funds NCL-2026-0017', evidenceDocumentVersionId: SEED_IDS.complaintVersion,
+    fingerprint: createHash('sha256').update('northstar-client-receipt-70000-2026-10-05').digest('hex'),
+    explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-05T10:05:00.000Z';
+  store.allocateReceipt(finance, receipt.id, {
+    expectedVersion: receipt.version, idempotencyKey: 'seed-cashroom-allocate-client-receipt',
+    allocations: [{ designation: 'client', matterId, clientPartyId: SEED_IDS.northstarClient,
+      billId: null, amountMinor: 70_000, cleared: true, restricted: false }],
+    note: 'Priya allocated cleared client funds to the exact client and matter.', explicitHumanConfirmation: true,
+  }, audit);
+
+  currentNow = '2026-10-05T10:10:00.000Z';
+  const transfer = store.prepareClientOfficeTransfer(finance, matterId, {
+    idempotencyKey: 'seed-cashroom-prepare-transfer', clientPartyId: SEED_IDS.northstarClient,
+    billId: issued.id, amountMinor: 60_000, note: 'Partial transfer against the exact delivered bill.',
+    explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-05T10:15:00.000Z';
+  const approvedTransfer = store.approveClientOfficeTransfer(partner, matterId, transfer.id, {
+    expectedVersion: transfer.version, idempotencyKey: 'seed-cashroom-approve-transfer', approvedAt: currentNow,
+    note: 'Marcus independently checked bill delivery, debt and available client funds.', explicitHumanApproval: true,
+  }, audit);
+  currentNow = '2026-10-05T10:20:00.000Z';
+  store.postClientOfficeTransfer(finance, matterId, transfer.id, {
+    expectedVersion: approvedTransfer.version, idempotencyKey: 'seed-cashroom-post-transfer', postedAt: currentNow,
+    explicitHumanConfirmation: true,
+  }, audit);
+
+  currentNow = '2026-10-05T10:30:00.000Z';
+  const suspenseReceipt = store.recordReceipt(finance, {
+    idempotencyKey: 'seed-cashroom-record-suspense-receipt', bankAccountId: '95000000-0000-4000-8000-000000000004',
+    statementLineId: null, amountMinor: 15_000, receivedOn: '2026-10-05', payer: 'Unidentified remitter',
+    reference: 'Reference missing', evidenceDocumentVersionId: SEED_IDS.complaintVersion,
+    fingerprint: createHash('sha256').update('northstar-unidentified-receipt-15000-2026-10-05').digest('hex'),
+    explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-05T10:35:00.000Z';
+  store.allocateReceipt(finance, suspenseReceipt.id, {
+    expectedVersion: suspenseReceipt.version, idempotencyKey: 'seed-cashroom-classify-suspense-receipt',
+    allocations: [{ designation: 'suspense', matterId: null, clientPartyId: null, billId: null,
+      amountMinor: 15_000, cleared: false, restricted: false }],
+    note: 'Priya retained the unidentified receipt in suspense pending exact remittance evidence.',
+    explicitHumanConfirmation: true,
+  }, audit);
+
+  currentNow = '2026-10-05T10:40:00.000Z';
+  const knownPayment = store.prepareClientPayment(finance, matterId, {
+    idempotencyKey: 'seed-cashroom-prepare-known-beneficiary', clientPartyId: SEED_IDS.northstarClient,
+    bankAccountId: '95000000-0000-4000-8000-000000000004', amountMinor: 2_000,
+    purpose: 'Synthetic residual-balance refund for controlled review.', beneficiaryName: 'Maya Clarke',
+    beneficiaryFingerprint: createHash('sha256').update('maya-known-beneficiary').digest('hex'),
+    beneficiaryEvidenceDocumentVersionId: SEED_IDS.complaintVersion, requestedPaymentMethod: 'bank_transfer',
+    explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-05T10:45:00.000Z';
+  const approvedPayment = store.approveClientPayment(partner, matterId, knownPayment.id, {
+    expectedVersion: knownPayment.version, idempotencyKey: 'seed-cashroom-approve-known-beneficiary',
+    approvedAt: currentNow, beneficiaryEvidenceDocumentVersionId: SEED_IDS.complaintVersion,
+    note: 'Marcus independently verified the known beneficiary and exact available funds.', explicitHumanApproval: true,
+  }, audit);
+  currentNow = '2026-10-05T10:50:00.000Z';
+  store.recordClientPayment(finance, matterId, knownPayment.id, {
+    expectedVersion: approvedPayment.version, idempotencyKey: 'seed-cashroom-record-known-beneficiary',
+    completedAt: currentNow, evidenceDocumentVersionId: SEED_IDS.complaintVersion,
+    note: 'Priya retained exact external completion evidence; SwiftClaim did not initiate the payment.',
+    explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-05T10:55:00.000Z';
+  store.prepareClientPayment(finance, matterId, {
+    idempotencyKey: 'seed-cashroom-prepare-changed-beneficiary', clientPartyId: SEED_IDS.northstarClient,
+    bankAccountId: '95000000-0000-4000-8000-000000000004', amountMinor: 2_000,
+    purpose: 'Synthetic changed-beneficiary request retained as a blocked exception.', beneficiaryName: 'Maya Clarke',
+    beneficiaryFingerprint: createHash('sha256').update('maya-changed-beneficiary').digest('hex'),
+    beneficiaryEvidenceDocumentVersionId: SEED_IDS.complaintVersion, requestedPaymentMethod: 'bank_transfer',
+    explicitHumanConfirmation: true,
+  }, audit);
+
+  currentNow = '2026-10-10T12:00:00.000Z';
+  const batch = store.importBankStatement(finance, {
+    idempotencyKey: 'seed-cashroom-import-statement', bankAccountId: '95000000-0000-4000-8000-000000000004',
+    statementFrom: '2026-10-01', statementTo: '2026-10-05', openingBalanceMinor: 0, closingBalanceMinor: 23_000,
+    currency: 'GBP', evidenceDocumentVersionId: SEED_IDS.complaintVersion,
+    rawChecksum: createHash('sha256').update('northstar-client-bank-statement-2026-10-05').digest('hex'),
+    lines: [
+      { lineNumber: 1, providerLineId: 'northstar-client-receipt', transactionDate: '2026-10-05', valueDate: '2026-10-05',
+        amountMinor: 70_000, reference: 'Client funds NCL-2026-0017', payerPayee: 'Maya Clarke',
+        rawLineHash: createHash('sha256').update('statement-line-client-receipt').digest('hex') },
+      { lineNumber: 2, providerLineId: 'northstar-bill-transfer', transactionDate: '2026-10-05', valueDate: '2026-10-05',
+        amountMinor: -60_000, reference: 'Transfer SC-2026-000001', payerPayee: 'Northstar office account',
+        rawLineHash: createHash('sha256').update('statement-line-bill-transfer').digest('hex') },
+      { lineNumber: 3, providerLineId: 'northstar-client-refund', transactionDate: '2026-10-05', valueDate: '2026-10-05',
+        amountMinor: -2_000, reference: 'Client refund NCL-2026-0017', payerPayee: 'Maya Clarke',
+        rawLineHash: createHash('sha256').update('statement-line-client-refund').digest('hex') },
+      { lineNumber: 4, providerLineId: 'northstar-unidentified-receipt', transactionDate: '2026-10-05', valueDate: '2026-10-05',
+        amountMinor: 15_000, reference: 'Reference missing', payerPayee: 'Unidentified remitter',
+        rawLineHash: createHash('sha256').update('statement-line-unidentified-receipt').digest('hex') },
+    ],
+  }, audit);
+  const reconciliation = store.prepareReconciliation(finance, {
+    idempotencyKey: 'seed-cashroom-prepare-reconciliation', bankAccountId: batch.bankAccountId,
+    statementBatchId: batch.id, ledgerClearedBalanceMinor: 8_000, outstandingLodgementsMinor: 15_000,
+    unpresentedPaymentsMinor: 0, documentedAdjustmentsMinor: 0, items: [{
+      itemKind: 'outstanding_lodgement', statementLineId: batch.lines[3]!.id, journalId: null,
+      amountMinor: 15_000, evidenceDocumentVersionId: SEED_IDS.complaintVersion,
+      explanation: 'The unidentified bank receipt remains explicitly classified in suspense pending remittance evidence.',
+    }],
+    note: 'Priya prepared the exact statement-to-ledger reconciliation.', explicitHumanConfirmation: true,
+  }, audit);
+  const receiptJournal = database.prepare(`SELECT journal_id AS id FROM finance_receipt_allocations
+    WHERE receipt_id=? AND designation='client' AND reverses_allocation_id IS NULL`).get(receipt.id) as { id: string };
+  const transferJournal = database.prepare(`SELECT client_journal_id AS id FROM finance_transfer_events
+    WHERE transfer_id=? AND event_type='posted'`).get(transfer.id) as { id: string };
+  const paymentJournal = database.prepare(`SELECT journal_id AS id FROM finance_payment_events
+    WHERE payment_id=? AND event_type='recorded_external'`).get(knownPayment.id) as { id: string };
+  currentNow = '2026-10-10T12:05:00.000Z';
+  const receiptMatched = store.decideReconciliationMatch(finance, reconciliation.id, {
+    expectedVersion: reconciliation.version, idempotencyKey: 'seed-cashroom-match-receipt',
+    statementLineId: batch.lines[0]!.id, decision: 'confirm', matches: [{ journalId: receiptJournal.id, amountMinor: 70_000 }],
+    explanation: 'Priya matched the exact receipt line to its posted client allocation journal.', explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-10T12:10:00.000Z';
+  const transferMatched = store.decideReconciliationMatch(finance, reconciliation.id, {
+    expectedVersion: receiptMatched.version, idempotencyKey: 'seed-cashroom-match-transfer',
+    statementLineId: batch.lines[1]!.id, decision: 'confirm', matches: [{ journalId: transferJournal.id, amountMinor: -60_000 }],
+    explanation: 'Priya matched the exact debit line to the posted client-side transfer journal.', explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-10T12:15:00.000Z';
+  const paymentMatched = store.decideReconciliationMatch(finance, reconciliation.id, {
+    expectedVersion: transferMatched.version, idempotencyKey: 'seed-cashroom-match-client-refund',
+    statementLineId: batch.lines[2]!.id, decision: 'confirm', matches: [{ journalId: paymentJournal.id, amountMinor: -2_000 }],
+    explanation: 'Priya matched the exact debit line to the externally evidenced client-payment journal.', explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-10T13:00:00.000Z';
+  const completed = store.completeReconciliation(finance, reconciliation.id, {
+    expectedVersion: paymentMatched.version, idempotencyKey: 'seed-cashroom-complete-reconciliation',
+    completedAt: currentNow, explicitHumanConfirmation: true,
+  }, audit);
+  currentNow = '2026-10-10T14:00:00.000Z';
+  store.signoffReconciliation(partner, reconciliation.id, {
+    expectedVersion: completed.version, idempotencyKey: 'seed-cashroom-signoff-reconciliation', signedOffAt: currentNow,
+    note: 'Marcus independently signed the exact zero-difference reconciliation.', explicitHumanApproval: true,
   }, audit);
 }

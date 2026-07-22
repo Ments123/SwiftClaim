@@ -289,6 +289,35 @@ describe('SwiftClaim client', () => {
     expect(window.location.pathname).toBe('/intake');
   });
 
+  it('lazy-loads Cashroom only for a firm-finance reader', async () => {
+    const financeUser = { ...userFixture, role: 'finance', permissions: {
+      ...userFixture.permissions, canAccessCashroom: true, canAccessIntake: false,
+    } };
+    const cashroom = {
+      actingUserId: financeUser.id,
+      permissions: { canRecordBankActivity: true, canAllocateMoney: true, canPreparePayment: true,
+        canApprovePayment: true, canPostCashroom: true, canPrepareReconciliation: true,
+        canSignoffReconciliation: false, canExport: true },
+      summary: { issuedGrossMinor: 0, outstandingMinor: 0, overdueBills: 0, unallocatedReceiptsMinor: 0, blockerExceptions: 0 },
+      bills: [], receipts: [], payments: [], bankAccounts: [], statements: [], reconciliations: [], exceptions: [],
+      exports: [{ kind: 'bills', href: '/api/finance/cashroom/exports/bills' }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/me') return json({ user: financeUser });
+      if (url === '/api/dashboard') return json(dashboardFixture);
+      if (url === '/api/finance/cashroom/workspace') return json({ workspace: cashroom });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    render(<App />);
+    await screen.findByRole('heading', { name: /good afternoon, ava/i });
+    await userEvent.click(screen.getByRole('button', { name: 'Cashroom' }));
+
+    expect(await screen.findByRole('heading', { name: 'Billing & Cashroom' })).toBeVisible();
+    expect(window.location.pathname).toBe('/cashroom');
+  });
+
   it('opens an accessible matter workspace from the dashboard', async () => {
     vi.stubGlobal(
       'fetch',

@@ -19,6 +19,7 @@ export interface CurrentUser {
     canApproveProtocol: boolean;
     canOverrideExpertConflict: boolean;
     canReviewExpertReport: boolean;
+    canAccessCashroom?: boolean;
   };
 }
 
@@ -1404,6 +1405,85 @@ export interface FinanceWorkspace {
     billed: FinanceNotConnected; paid: FinanceNotConnected; recovered: FinanceNotConnected;
   };
   sources: { documents: FinanceDocumentSource[] };
+}
+
+export interface MatterBillLine {
+  id: string; lineNumber: number; sourceKind: 'time' | 'disbursement' | 'adjustment'; sourceId: string;
+  narrative: string; netMinor: number; vatTreatment: string; vatMinor: number; grossMinor: number;
+}
+
+export interface MatterBill {
+  id: string; clientPartyId: string; status: string; billReference: string | null;
+  currentVersionId: string; approvedVersionId: string | null; issuedVersionId: string | null;
+  issuedAt: string | null; deliveredAt: string | null; dueOn: string; netMinor: number;
+  vatMinor: number; grossMinor: number; creditedMinor: number; allocatedMinor: number;
+  paidMinor: number; outstandingMinor: number; currency: FinanceCurrency; version: number;
+  preparedBy: string; preparedAt: string; taxPoint: string | null; documentVersionId: string | null;
+  documentSha256: string | null; lines: MatterBillLine[]; events: Array<Record<string, unknown>>;
+}
+
+export interface MatterMoneyBalance {
+  clientPartyId: string; clientHeldMinor: number; clientClearedMinor: number;
+  clientRestrictedMinor: number; clientAvailableMinor: number; clientReservedMinor: number;
+  officeHeldMinor: number;
+}
+
+export interface MatterPayment {
+  id: string; clientPartyId: string; amountMinor: number; purpose: string; preparedBy: string; preparedAt: string;
+  currency: FinanceCurrency; version: number; status: string; events: Array<Record<string, unknown>>;
+}
+
+export interface MatterTransfer {
+  id: string; clientPartyId: string; billId: string; amountMinor: number; preparedBy: string;
+  preparedAt: string; currency: FinanceCurrency; version: number; status: string;
+  events: Array<Record<string, unknown>>;
+}
+
+export interface MatterBillingWorkspace {
+  matterId: string; actingUserId: string;
+  permissions: {
+    canPrepareBill: boolean; canApproveBill: boolean; canIssueBill: boolean;
+    canPrepareTransfer: boolean; canApproveTransfer: boolean; canPostTransfer: boolean;
+  };
+  clients: Array<{ id: string; name: string }>;
+  eligibleSources: Array<{ id: string; kind: 'time' | 'disbursement'; narrative: string; netMinor: number; vatMinor: number | null }>;
+  bills: MatterBill[]; money: MatterMoneyBalance[]; payments: MatterPayment[]; transfers: MatterTransfer[];
+  exceptions: Array<{ id: string; kind: string; severity: string; summary: string; amountMinor: number | null; raisedAt: string }>;
+  history: Array<{ id: string; kind: string; recordId: string; status: string; occurredAt: string; summary: string }>;
+}
+
+export interface CashroomWorkspace {
+  actingUserId: string;
+  permissions: {
+    canRecordBankActivity: boolean; canAllocateMoney: boolean; canPreparePayment: boolean;
+    canApprovePayment: boolean; canPostCashroom: boolean; canPrepareReconciliation: boolean;
+    canSignoffReconciliation: boolean; canExport: boolean;
+  };
+  summary: { issuedGrossMinor: number; outstandingMinor: number; overdueBills: number;
+    unallocatedReceiptsMinor: number; blockerExceptions: number };
+  bills: Array<{ id: string; matterId: string; matterReference: string; clientPartyId: string;
+    billReference: string; dueOn: string; grossMinor: number; creditedMinor: number; paidMinor: number;
+    outstandingMinor: number; currency: FinanceCurrency; status: string;
+    ageBucket: 'paid' | 'not_due' | '1_30' | '31_60' | '61_90' | '90_plus' }>;
+  receipts: Array<{ id: string; bankAccountId: string; amountMinor: number; allocatedMinor: number;
+    unallocatedMinor: number; receivedOn: string; reference: string; currency: FinanceCurrency; status: string }>;
+  payments: Array<{ id: string; matterId: string; matterReference: string; clientPartyId: string;
+    amountMinor: number; currency: FinanceCurrency; purpose: string; preparedBy: string; preparedAt: string; status: string }>;
+  bankAccounts: Array<{ id: string; name: string; designation: 'client' | 'office';
+    accountIdentifierMasked: string; currency: FinanceCurrency; active: boolean; latestStatementTo: string | null }>;
+  statements: Array<{ id: string; bankAccountId: string; statementFrom: string; statementTo: string;
+    closingBalanceMinor: number; currency: FinanceCurrency; reconciliationId: string | null;
+    reconciliationStatus: string | null; reconciliationVersion: number | null;
+    lines: Array<{ id: string; transactionDate: string; amountMinor: number; reference: string;
+      decision: 'human_confirmed' | 'human_rejected' | null; suggestion: null | { statementLineId: string; journalId: string;
+        provisional: true; confidence: 'high' | 'medium' | 'low'; explanation: string } }> }>;
+  reconciliations: Array<{ id: string; bankAccountId: string; statementBatchId: string;
+    statementClosingOn: string; statementClosingBalanceMinor: number; ledgerClearedBalanceMinor: number;
+    differenceMinor: number; currency: FinanceCurrency; preparedBy: string; preparedAt: string;
+    version: number; status: string; nextReviewDueOn: string | null }>;
+  exceptions: Array<{ id: string; matterId: string | null; kind: string; severity: string;
+    summary: string; amountMinor: number | null; currency: FinanceCurrency | null; raisedAt: string }>;
+  exports: Array<{ kind: 'bills' | 'cashbook' | 'reconciliations'; href: string }>;
 }
 
 export type MatterSection =

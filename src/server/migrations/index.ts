@@ -12,6 +12,7 @@ import { governedProceedingsMigration } from './009-governed-proceedings.js';
 import { governedPleadingsResponseMigration } from './010-governed-pleadings-response.js';
 import { governedDisclosureEvidenceMigration } from './011-governed-disclosure-evidence.js';
 import { governedFinanceFoundationMigration } from './012-governed-finance-foundation.js';
+import { governedBillingCashroomMigration } from './013-governed-billing-cashroom.js';
 import type { Migration } from './types.js';
 
 export const migrations: Migration[] = [
@@ -27,6 +28,7 @@ export const migrations: Migration[] = [
   governedPleadingsResponseMigration,
   governedDisclosureEvidenceMigration,
   governedFinanceFoundationMigration,
+  governedBillingCashroomMigration,
 ];
 
 export function runMigrations(

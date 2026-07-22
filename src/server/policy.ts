@@ -80,6 +80,17 @@ export type Capability =
   | 'finance.prepare_journal'
   | 'finance.approve_journal'
   | 'finance.post_journal'
+  | 'finance.prepare_bill'
+  | 'finance.approve_bill'
+  | 'finance.issue_bill'
+  | 'finance.record_bank_activity'
+  | 'finance.allocate_money'
+  | 'finance.prepare_client_payment'
+  | 'finance.approve_client_payment'
+  | 'finance.post_cashroom'
+  | 'finance.prepare_reconciliation'
+  | 'finance.signoff_reconciliation'
+  | 'finance.export_accounts'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -144,6 +155,11 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'finance.approve_time', 'finance.manage_rates', 'finance.manage_estimates',
     'finance.manage_disbursements', 'finance.prepare_journal',
     'finance.approve_journal', 'finance.post_journal',
+    'finance.prepare_bill', 'finance.approve_bill', 'finance.issue_bill',
+    'finance.record_bank_activity', 'finance.allocate_money',
+    'finance.prepare_client_payment', 'finance.approve_client_payment',
+    'finance.post_cashroom', 'finance.prepare_reconciliation',
+    'finance.signoff_reconciliation', 'finance.export_accounts',
     'administration.view',
   ],
   partner: [
@@ -206,6 +222,9 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'finance.read_matter', 'finance.read_firm', 'finance.record_time',
     'finance.approve_time', 'finance.manage_rates', 'finance.manage_estimates',
     'finance.manage_disbursements', 'finance.prepare_journal', 'finance.approve_journal',
+    'finance.prepare_bill', 'finance.approve_bill',
+    'finance.approve_client_payment',
+    'finance.signoff_reconciliation', 'finance.export_accounts',
     'administration.view',
   ],
   solicitor: [
@@ -256,6 +275,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'disclosure.generate_list', 'disclosure.record_external',
     'finance.read_matter', 'finance.record_time', 'finance.approve_time',
     'finance.manage_estimates',
+    'finance.prepare_bill',
   ],
   paralegal: [
     'matter.read',
@@ -287,6 +307,9 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'matter.read', 'finance.read_matter', 'finance.read_firm',
     'finance.manage_rates', 'finance.manage_estimates', 'finance.manage_disbursements',
     'finance.prepare_journal', 'finance.approve_journal', 'finance.post_journal',
+    'finance.issue_bill', 'finance.record_bank_activity', 'finance.allocate_money',
+    'finance.prepare_client_payment', 'finance.approve_client_payment',
+    'finance.post_cashroom', 'finance.prepare_reconciliation', 'finance.export_accounts',
   ],
   readonly: ['matter.read', 'communications.read'],
 };
