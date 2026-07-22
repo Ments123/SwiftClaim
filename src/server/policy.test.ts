@@ -139,4 +139,17 @@ describe('role capabilities', () => {
     expect(hasCapability(user('paralegal'), 'finance.approve_time')).toBe(false);
     expect(hasCapability(user('readonly'), 'finance.read_matter')).toBe(false);
   });
+
+  it('separates bill, client-money and reconciliation duties', () => {
+    expect(hasCapability(user('solicitor'), 'finance.prepare_bill')).toBe(true);
+    expect(hasCapability(user('solicitor'), 'finance.approve_bill')).toBe(false);
+    expect(hasCapability(user('partner'), 'finance.approve_bill')).toBe(true);
+    expect(hasCapability(user('partner'), 'finance.issue_bill')).toBe(false);
+    expect(hasCapability(user('finance'), 'finance.issue_bill')).toBe(true);
+    expect(hasCapability(user('finance'), 'finance.prepare_client_payment')).toBe(true);
+    expect(hasCapability(user('finance'), 'finance.approve_client_payment')).toBe(true);
+    expect(hasCapability(user('finance'), 'finance.prepare_reconciliation')).toBe(true);
+    expect(hasCapability(user('partner'), 'finance.signoff_reconciliation')).toBe(true);
+    expect(hasCapability(user('readonly'), 'finance.export_accounts')).toBe(false);
+  });
 });

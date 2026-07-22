@@ -2625,6 +2625,73 @@ export const reverseFinanceJournalSchema = z.object({
   reason: z.string().trim().min(10).max(2_000), explicitHumanApproval: z.literal(true),
 }).strict();
 
+const financeBillSourceSchema = z.object({
+  sourceKind: z.enum(['time', 'disbursement']), sourceId: financeUuidSchema,
+  netMinor: financeNonNegativeMoneySchema, narrative: z.string().trim().min(5).max(2_000),
+}).strict();
+const financeBillAdjustmentSchema = z.object({
+  adjustmentKind: z.enum(['reduction', 'write_off']), sourceId: financeUuidSchema,
+  amountMinor: financeNonNegativeMoneySchema.positive(), reason: z.string().trim().min(10).max(2_000),
+}).strict();
+export const prepareFinanceBillSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, clientPartyId: financeUuidSchema, dueOn: z.iso.date(),
+  sourceEntries: z.array(financeBillSourceSchema).min(1).max(1_000),
+  adjustments: z.array(financeBillAdjustmentSchema).max(1_000),
+}).strict();
+export const submitFinanceBillSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  note: z.string().trim().min(10).max(2_000), explicitHumanConfirmation: z.literal(true),
+}).strict();
+export const approveFinanceBillSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  approvedAt: financeDateTimeSchema, note: z.string().trim().min(10).max(2_000),
+  explicitHumanApproval: z.literal(true),
+}).strict();
+export const issueFinanceBillSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  taxPoint: z.iso.date(), explicitHumanConfirmation: z.literal(true),
+}).strict();
+export const recordFinanceBillDeliverySchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  deliveredAt: financeDateTimeSchema, channel: z.enum(['email', 'post', 'portal', 'hand']),
+  recipient: z.string().trim().min(2).max(300), evidenceDocumentVersionId: financeNullableUuidSchema,
+  explicitHumanConfirmation: z.literal(true),
+}).strict().superRefine((input, context) => {
+  if (!input.evidenceDocumentVersionId)
+    context.addIssue({ code: 'custom', path: ['evidenceDocumentVersionId'], message: 'Bill delivery requires exact retained evidence.' });
+});
+export const importFinanceBankStatementSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, bankAccountId: financeUuidSchema,
+  statementFrom: z.iso.date(), statementTo: z.iso.date(),
+  openingBalanceMinor: financeMoneySchema, closingBalanceMinor: financeMoneySchema,
+  currency: financeCurrencySchema, evidenceDocumentVersionId: financeUuidSchema,
+  rawChecksum: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+const financeReceiptAllocationSchema = z.object({
+  designation: z.enum(['client', 'office', 'suspense']), matterId: financeNullableUuidSchema,
+  clientPartyId: financeNullableUuidSchema, billId: financeNullableUuidSchema,
+  amountMinor: financeNonNegativeMoneySchema.positive(),
+}).strict().superRefine((input, context) => {
+  if (input.designation !== 'suspense' && (!input.matterId || !input.clientPartyId))
+    context.addIssue({ code: 'custom', path: ['matterId'], message: 'Client and office allocations require exact matter and client references.' });
+  if (input.designation === 'suspense' && (input.matterId || input.clientPartyId || input.billId))
+    context.addIssue({ code: 'custom', path: ['designation'], message: 'Suspense allocations cannot claim a matter, client or bill.' });
+});
+export const allocateFinanceReceiptSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  allocations: z.array(financeReceiptAllocationSchema).min(1).max(500),
+  note: z.string().trim().min(10).max(2_000), explicitHumanConfirmation: z.literal(true),
+}).strict();
+export const approveFinanceClientPaymentSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  approvedAt: financeDateTimeSchema, beneficiaryEvidenceDocumentVersionId: financeUuidSchema,
+  note: z.string().trim().min(10).max(2_000), explicitHumanApproval: z.literal(true),
+}).strict();
+export const completeFinanceReconciliationSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  completedAt: financeDateTimeSchema, explicitHumanConfirmation: z.literal(true),
+}).strict();
+
 export type FirmRole = z.infer<typeof firmRoleSchema>;
 export type RiskLevel = z.infer<typeof riskLevelSchema>;
 export type CreateMatterInput = z.infer<typeof createMatterSchema>;
@@ -2748,6 +2815,15 @@ export type PrepareFinanceJournalInput = z.infer<typeof prepareFinanceJournalSch
 export type ApproveFinanceJournalInput = z.infer<typeof approveFinanceJournalSchema>;
 export type PostFinanceJournalInput = z.infer<typeof postFinanceJournalSchema>;
 export type ReverseFinanceJournalInput = z.infer<typeof reverseFinanceJournalSchema>;
+export type PrepareFinanceBillInput = z.infer<typeof prepareFinanceBillSchema>;
+export type SubmitFinanceBillInput = z.infer<typeof submitFinanceBillSchema>;
+export type ApproveFinanceBillInput = z.infer<typeof approveFinanceBillSchema>;
+export type IssueFinanceBillInput = z.infer<typeof issueFinanceBillSchema>;
+export type RecordFinanceBillDeliveryInput = z.infer<typeof recordFinanceBillDeliverySchema>;
+export type ImportFinanceBankStatementInput = z.infer<typeof importFinanceBankStatementSchema>;
+export type AllocateFinanceReceiptInput = z.infer<typeof allocateFinanceReceiptSchema>;
+export type ApproveFinanceClientPaymentInput = z.infer<typeof approveFinanceClientPaymentSchema>;
+export type CompleteFinanceReconciliationInput = z.infer<typeof completeFinanceReconciliationSchema>;
 
 export interface ApiErrorBody {
   error: {
