@@ -2667,25 +2667,66 @@ export const importFinanceBankStatementSchema = z.object({
   currency: financeCurrencySchema, evidenceDocumentVersionId: financeUuidSchema,
   rawChecksum: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
+export const recordFinanceReceiptSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, bankAccountId: financeUuidSchema,
+  statementLineId: financeNullableUuidSchema, amountMinor: financeNonNegativeMoneySchema.positive(),
+  receivedOn: z.iso.date(), payer: z.string().trim().min(2).max(300),
+  reference: z.string().trim().min(2).max(500), evidenceDocumentVersionId: financeUuidSchema,
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/), explicitHumanConfirmation: z.literal(true),
+}).strict();
 const financeReceiptAllocationSchema = z.object({
   designation: z.enum(['client', 'office', 'suspense']), matterId: financeNullableUuidSchema,
   clientPartyId: financeNullableUuidSchema, billId: financeNullableUuidSchema,
-  amountMinor: financeNonNegativeMoneySchema.positive(),
+  amountMinor: financeNonNegativeMoneySchema.positive(), cleared: z.boolean(), restricted: z.boolean(),
 }).strict().superRefine((input, context) => {
   if (input.designation !== 'suspense' && (!input.matterId || !input.clientPartyId))
     context.addIssue({ code: 'custom', path: ['matterId'], message: 'Client and office allocations require exact matter and client references.' });
   if (input.designation === 'suspense' && (input.matterId || input.clientPartyId || input.billId))
     context.addIssue({ code: 'custom', path: ['designation'], message: 'Suspense allocations cannot claim a matter, client or bill.' });
+  if (input.restricted && input.designation !== 'client')
+    context.addIssue({ code: 'custom', path: ['restricted'], message: 'Only client money can be restricted.' });
 });
 export const allocateFinanceReceiptSchema = z.object({
   expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
   allocations: z.array(financeReceiptAllocationSchema).min(1).max(500),
   note: z.string().trim().min(10).max(2_000), explicitHumanConfirmation: z.literal(true),
 }).strict();
+export const reverseFinanceReceiptAllocationSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  allocationId: financeUuidSchema, note: z.string().trim().min(10).max(2_000),
+  explicitHumanConfirmation: z.literal(true),
+}).strict();
+export const prepareFinanceClientPaymentSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, clientPartyId: financeUuidSchema,
+  bankAccountId: financeUuidSchema, amountMinor: financeNonNegativeMoneySchema.positive(),
+  purpose: z.string().trim().min(10).max(2_000), beneficiaryName: z.string().trim().min(2).max(300),
+  beneficiaryFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  beneficiaryEvidenceDocumentVersionId: financeUuidSchema,
+  requestedPaymentMethod: z.enum(['bank_transfer', 'cheque', 'other']), explicitHumanConfirmation: z.literal(true),
+}).strict();
 export const approveFinanceClientPaymentSchema = z.object({
   expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
   approvedAt: financeDateTimeSchema, beneficiaryEvidenceDocumentVersionId: financeUuidSchema,
   note: z.string().trim().min(10).max(2_000), explicitHumanApproval: z.literal(true),
+}).strict();
+export const recordFinanceClientPaymentSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  completedAt: financeDateTimeSchema, evidenceDocumentVersionId: financeUuidSchema,
+  note: z.string().trim().min(10).max(2_000), explicitHumanConfirmation: z.literal(true),
+}).strict();
+export const prepareFinanceClientOfficeTransferSchema = z.object({
+  idempotencyKey: financeCommandKeySchema, clientPartyId: financeUuidSchema,
+  billId: financeUuidSchema, amountMinor: financeNonNegativeMoneySchema.positive(),
+  note: z.string().trim().min(10).max(2_000), explicitHumanConfirmation: z.literal(true),
+}).strict();
+export const approveFinanceClientOfficeTransferSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  approvedAt: financeDateTimeSchema, note: z.string().trim().min(10).max(2_000),
+  explicitHumanApproval: z.literal(true),
+}).strict();
+export const postFinanceClientOfficeTransferSchema = z.object({
+  expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
+  postedAt: financeDateTimeSchema, explicitHumanConfirmation: z.literal(true),
 }).strict();
 export const completeFinanceReconciliationSchema = z.object({
   expectedVersion: z.number().int().positive(), idempotencyKey: financeCommandKeySchema,
@@ -2821,8 +2862,15 @@ export type ApproveFinanceBillInput = z.infer<typeof approveFinanceBillSchema>;
 export type IssueFinanceBillInput = z.infer<typeof issueFinanceBillSchema>;
 export type RecordFinanceBillDeliveryInput = z.infer<typeof recordFinanceBillDeliverySchema>;
 export type ImportFinanceBankStatementInput = z.infer<typeof importFinanceBankStatementSchema>;
+export type RecordFinanceReceiptInput = z.infer<typeof recordFinanceReceiptSchema>;
 export type AllocateFinanceReceiptInput = z.infer<typeof allocateFinanceReceiptSchema>;
+export type ReverseFinanceReceiptAllocationInput = z.infer<typeof reverseFinanceReceiptAllocationSchema>;
+export type PrepareFinanceClientPaymentInput = z.infer<typeof prepareFinanceClientPaymentSchema>;
 export type ApproveFinanceClientPaymentInput = z.infer<typeof approveFinanceClientPaymentSchema>;
+export type RecordFinanceClientPaymentInput = z.infer<typeof recordFinanceClientPaymentSchema>;
+export type PrepareFinanceClientOfficeTransferInput = z.infer<typeof prepareFinanceClientOfficeTransferSchema>;
+export type ApproveFinanceClientOfficeTransferInput = z.infer<typeof approveFinanceClientOfficeTransferSchema>;
+export type PostFinanceClientOfficeTransferInput = z.infer<typeof postFinanceClientOfficeTransferSchema>;
 export type CompleteFinanceReconciliationInput = z.infer<typeof completeFinanceReconciliationSchema>;
 
 export interface ApiErrorBody {

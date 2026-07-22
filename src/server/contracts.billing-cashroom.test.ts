@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   allocateFinanceReceiptSchema,
+  prepareFinanceClientPaymentSchema,
+  prepareFinanceClientOfficeTransferSchema,
+  recordFinanceReceiptSchema,
   approveFinanceBillSchema,
   approveFinanceClientPaymentSchema,
   completeFinanceReconciliationSchema,
@@ -60,8 +63,8 @@ describe('billing and cashroom contracts', () => {
       expectedVersion: 1,
       idempotencyKey: 'receipt-allocate-001',
       allocations: [
-        { designation: 'client', matterId: uuid(), clientPartyId: uuid(), billId: null, amountMinor: 10_000 },
-        { designation: 'office', matterId: uuid(), clientPartyId: uuid(), billId: uuid(), amountMinor: 5_000 },
+        { designation: 'client', matterId: uuid(), clientPartyId: uuid(), billId: null, amountMinor: 10_000, cleared: true, restricted: false },
+        { designation: 'office', matterId: uuid(), clientPartyId: uuid(), billId: uuid(), amountMinor: 5_000, cleared: true, restricted: false },
       ],
       note: 'The mixed receipt split was checked against exact remittance evidence.',
       explicitHumanConfirmation: true,
@@ -75,6 +78,24 @@ describe('billing and cashroom contracts', () => {
       note: 'Attempted conflated client and office allocation.',
       explicitHumanConfirmation: true,
     })).toThrow();
+  });
+
+  it('requires exact evidence for recorded receipts and client-money commands', () => {
+    expect(recordFinanceReceiptSchema.parse({
+      idempotencyKey: 'receipt-record-001', bankAccountId: uuid(), statementLineId: null,
+      amountMinor: 15_000, receivedOn: '2026-07-21', payer: 'Client', reference: 'Damages funds',
+      evidenceDocumentVersionId: uuid(), fingerprint: 'a'.repeat(64), explicitHumanConfirmation: true,
+    }).amountMinor).toBe(15_000);
+    expect(prepareFinanceClientPaymentSchema.parse({
+      idempotencyKey: 'payment-prepare-001', clientPartyId: uuid(), bankAccountId: uuid(),
+      amountMinor: 5_000, purpose: 'Refund unused client funds after matter review.', beneficiaryName: 'Client',
+      beneficiaryFingerprint: 'b'.repeat(64), beneficiaryEvidenceDocumentVersionId: uuid(),
+      requestedPaymentMethod: 'bank_transfer', explicitHumanConfirmation: true,
+    }).amountMinor).toBe(5_000);
+    expect(prepareFinanceClientOfficeTransferSchema.parse({
+      idempotencyKey: 'transfer-prepare-001', clientPartyId: uuid(), billId: uuid(), amountMinor: 7_500,
+      note: 'Transfer against the exact delivered bill only.', explicitHumanConfirmation: true,
+    }).amountMinor).toBe(7_500);
   });
 
   it('keeps imported bank activity provisional and reconciliation human-controlled', () => {

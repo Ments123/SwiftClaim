@@ -3,8 +3,17 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import type {
   ApproveFinanceBillInput,
+  AllocateFinanceReceiptInput,
+  ApproveFinanceClientOfficeTransferInput,
+  ApproveFinanceClientPaymentInput,
   IssueFinanceBillInput,
+  PostFinanceClientOfficeTransferInput,
+  PrepareFinanceClientOfficeTransferInput,
+  PrepareFinanceClientPaymentInput,
   PrepareFinanceBillInput,
+  RecordFinanceClientPaymentInput,
+  RecordFinanceReceiptInput,
+  ReverseFinanceReceiptAllocationInput,
   RecordFinanceBillDeliveryInput,
   SubmitFinanceBillInput,
 } from '../../shared/contracts.js';
@@ -13,6 +22,7 @@ import { appendAudit, appendTimeline, type AuditContext } from '../store.js';
 import { calculateBillTotals, calculateVat, type VatCalculation, type VatTreatment } from './billing-calculations.js';
 import { projectBill, type BillLifecycleEvent, type BillVersionSnapshot } from './billing.js';
 import { projectCreditImpact } from './billing.js';
+import { projectMatterMoney } from './cashroom.js';
 
 type Row = Record<string, string | number | null>;
 
@@ -162,9 +172,43 @@ export class BillingCashroomStore {
     );
   }
 
-  private appendOperational(user: SessionUser, matterId: string, action: string, entityId: string, title: string, key: string, at: string, safeAfter: Record<string, unknown>, audit: AuditContext): void {
-    appendTimeline(this.database, { firmId: user.firmId, matterId, type: action, title, actorUserId: user.id, occurredAt: at, metadata: { entityType: 'finance_bill', entityId } });
-    appendAudit(this.database, { firmId: user.firmId, matterId, userId: user.id, action, entityType: 'finance_bill', entityId, after: { entityId, ...safeAfter }, requestId: audit.requestId, ipAddress: audit.ipAddress, createdAt: at });
+  private replayFirm<T>(user: SessionUser, scope: string, key: string, input: unknown): T | undefined {
+    const row = this.database.prepare(`SELECT input_hash AS inputHash, response_json AS responseJson
+      FROM finance_command_receipts WHERE firm_id = ? AND scope_kind = 'firm' AND matter_id IS NULL
+      AND command_scope = ? AND idempotency_key = ?`).get(user.firmId, scope, key) as Row | undefined;
+    if (!row) return undefined;
+    if (String(row.inputHash) !== hash(input)) throw new BillingCashroomStoreError(
+      'IDEMPOTENCY_KEY_REUSED', 'The idempotency key was already used with different input.',
+    );
+    return JSON.parse(String(row.responseJson)) as T;
+  }
+
+  private saveFirmReplay(user: SessionUser, scope: string, entityId: string, key: string, input: unknown, response: unknown, at: string): void {
+    this.database.prepare(`INSERT INTO finance_command_receipts (
+      id, firm_id, matter_id, scope_kind, command_scope, route_entity_id, idempotency_key,
+      input_hash, response_json, created_by, created_at
+    ) VALUES (?, ?, NULL, 'firm', ?, ?, ?, ?, ?, ?, ?)`).run(
+      randomUUID(), user.firmId, scope, entityId, key, hash(input), canonical(response), user.id, at,
+    );
+  }
+
+  private appendFirmOperational(user: SessionUser, action: string, entityId: string, key: string, at: string, safeAfter: Record<string, unknown>, audit: AuditContext): void {
+    appendAudit(this.database, { firmId: user.firmId, matterId: null, userId: user.id, action,
+      entityType: 'finance_receipt', entityId, after: { entityId, ...safeAfter }, requestId: audit.requestId,
+      ipAddress: audit.ipAddress, createdAt: at });
+    this.database.prepare(`INSERT INTO finance_firm_events
+      (id, firm_id, type, actor_user_id, idempotency_key, payload_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(randomUUID(), user.firmId, action, user.id,
+      `finance:${action}:${entityId}:${key}`, canonical({ entityId, ...safeAfter }), at);
+    this.database.prepare(`INSERT INTO finance_integration_outbox
+      (id, firm_id, matter_id, scope_kind, topic, payload_json, status, attempts, available_at, created_at, deduplication_key)
+      VALUES (?, ?, NULL, 'firm', ?, ?, 'pending', 0, ?, ?, ?)`).run(randomUUID(), user.firmId, action,
+      canonical({ entityId, ...safeAfter }), at, at, `finance:${user.firmId}:${action}:${entityId}:${key}`);
+  }
+
+  private appendOperational(user: SessionUser, matterId: string, action: string, entityId: string, title: string, key: string, at: string, safeAfter: Record<string, unknown>, audit: AuditContext, entityType = 'finance_bill'): void {
+    appendTimeline(this.database, { firmId: user.firmId, matterId, type: action, title, actorUserId: user.id, occurredAt: at, metadata: { entityType, entityId } });
+    appendAudit(this.database, { firmId: user.firmId, matterId, userId: user.id, action, entityType, entityId, after: { entityId, ...safeAfter }, requestId: audit.requestId, ipAddress: audit.ipAddress, createdAt: at });
     this.database.prepare(`INSERT INTO domain_events (
       id, firm_id, matter_id, type, occurred_on, actor_user_id, idempotency_key, payload_json, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -286,13 +330,22 @@ export class BillingCashroomStore {
       WHERE cn.bill_id = ? AND cn.firm_id = ? AND cn.matter_id = ? AND EXISTS (
         SELECT 1 FROM finance_credit_note_events e WHERE e.credit_note_id = cn.id AND e.firm_id = cn.firm_id
         AND e.matter_id = cn.matter_id AND e.event_type = 'issued')`).all(billId, user.firmId, matterId) as Row[];
-    const projected = projectBill({ billId, versions, events, payments: [],
+    const receiptPayments = this.database.prepare(`SELECT a.amount_minor AS amountMinor FROM finance_receipt_allocations a
+      WHERE a.bill_id=? AND a.firm_id=? AND a.matter_id=? AND a.designation='office' AND a.reverses_allocation_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM finance_receipt_allocations r WHERE r.reverses_allocation_id=a.id AND r.firm_id=a.firm_id)`)
+      .all(billId, user.firmId, matterId) as Row[];
+    const transfers = this.database.prepare(`SELECT t.amount_minor AS amountMinor FROM finance_client_office_transfers t
+      WHERE t.bill_id=? AND t.firm_id=? AND t.matter_id=? AND EXISTS (SELECT 1 FROM finance_transfer_events e
+      WHERE e.transfer_id=t.id AND e.firm_id=t.firm_id AND e.matter_id=t.matter_id AND e.event_type='posted')`)
+      .all(billId, user.firmId, matterId) as Row[];
+    const projected = projectBill({ billId, versions, events,
+      payments: [...receiptPayments, ...transfers].map((payment) => ({ amountMinor: Number(payment.amountMinor), posted: true })),
       credits: issuedCredits.map((credit) => ({ grossMinor: Number(credit.grossMinor), issued: true })) });
     const document = this.database.prepare(`SELECT bd.tax_point AS taxPoint, bd.document_version_id AS documentVersionId,
       bd.sha256 FROM finance_bill_documents bd WHERE bd.bill_id = ? AND bd.firm_id = ? AND bd.matter_id = ?`)
       .get(billId, user.firmId, matterId) as Row | undefined;
     const delivered = [...eventRows].reverse().find((event) => event.eventType === 'delivered');
-    return { ...projected, id: billId, clientPartyId: String(bill.clientPartyId), preparedBy: String(bill.preparedBy),
+    return { ...projected, paidMinor: projected.allocatedMinor, id: billId, clientPartyId: String(bill.clientPartyId), preparedBy: String(bill.preparedBy),
       preparedAt: String(bill.preparedAt), version: events.length, taxPoint: document ? String(document.taxPoint) : null,
       documentVersionId: document ? String(document.documentVersionId) : null, documentSha256: document ? String(document.sha256) : null,
       deliveredAt: delivered ? String(delivered.occurredAt) : null,
@@ -645,7 +698,7 @@ export class BillingCashroomStore {
       const response = this.getCreditNote(user, matterId, creditId)!;
       this.saveReplay(user, matterId, scope, creditId, input.idempotencyKey, input, response, at);
       this.appendOperational(user, matterId, 'finance.credit_note_prepared', creditId, 'Credit note prepared', input.idempotencyKey,
-        at, { billId, grossMinor: response.grossMinor, currency: 'GBP' }, audit);
+        at, { billId, grossMinor: response.grossMinor, currency: 'GBP' }, audit, 'finance_credit_note');
       return response;
     });
   }
@@ -706,7 +759,489 @@ export class BillingCashroomStore {
       const response = this.getCreditNote(user, matterId, creditNoteId)!;
       this.saveReplay(user, matterId, scope, creditNoteId, input.idempotencyKey, input, response, this.now().toISOString());
       this.appendOperational(user, matterId, 'finance.credit_note_issued', creditNoteId, `Credit note ${reference} issued`,
-        input.idempotencyKey, issuedAt, { billId: credit.billId, creditReference: reference, grossMinor: credit.grossMinor, currency: 'GBP' }, audit);
+        input.idempotencyKey, issuedAt, { billId: credit.billId, creditReference: reference, grossMinor: credit.grossMinor, currency: 'GBP' }, audit, 'finance_credit_note');
+      return response;
+    });
+  }
+
+  private exactEvidence(firmId: string, versionId: string, matterId?: string): boolean {
+    return Boolean(this.database.prepare(`SELECT 1 FROM document_versions dv
+      JOIN documents d ON d.id = dv.document_id AND d.firm_id = dv.firm_id
+      WHERE dv.id = ? AND dv.firm_id = ? ${matterId ? 'AND d.matter_id = ?' : ''}`)
+      .get(...(matterId ? [versionId, firmId, matterId] : [versionId, firmId])));
+  }
+
+  private activeAccount(firmId: string, code: string): string {
+    const rows = this.database.prepare(`SELECT id FROM finance_accounts WHERE firm_id = ? AND code = ? AND active = 1`)
+      .all(firmId, code) as Row[];
+    if (rows.length !== 1) throw new BillingCashroomStoreError('INVALID_STATE', `Cashroom requires exactly one active ${code} account.`);
+    return String(rows[0]!.id);
+  }
+
+  private openPeriod(firmId: string, accountingDate: string): string {
+    const rows = this.database.prepare(`SELECT id FROM finance_accounting_periods WHERE firm_id = ? AND status = 'open'
+      AND starts_on <= ? AND ends_on >= ?`).all(firmId, accountingDate, accountingDate) as Row[];
+    if (rows.length !== 1) throw new BillingCashroomStoreError('INVALID_STATE', 'Cashroom posting requires exactly one open accounting period.');
+    return String(rows[0]!.id);
+  }
+
+  private postCashJournal(user: SessionUser, matterId: string, sourceId: string, description: string,
+    accountingDate: string, preparedBy: string, approvedBy: string, debitAccount: string,
+    creditAccount: string, amountMinor: number, at: string): string {
+    const journalId = randomUUID();
+    this.database.prepare(`INSERT INTO finance_journals
+      (id,firm_id,matter_id,period_id,accounting_date,source_kind,source_id,description,currency,reverses_journal_id,prepared_by,prepared_at)
+      VALUES (?,?,?,?,?,'other',?,?,'GBP',NULL,?,?)`).run(journalId, user.firmId, matterId,
+      this.openPeriod(user.firmId, accountingDate), accountingDate, sourceId, description, preparedBy, at);
+    const line = this.database.prepare(`INSERT INTO finance_journal_lines
+      (id,firm_id,matter_id,journal_id,line_number,account_id,debit_minor,credit_minor,currency,memo)
+      VALUES (?,?,?,?,?,?,?,?,'GBP',?)`);
+    line.run(randomUUID(), user.firmId, matterId, journalId, 1, debitAccount, amountMinor, 0, description);
+    line.run(randomUUID(), user.firmId, matterId, journalId, 2, creditAccount, 0, amountMinor, description);
+    const event = this.database.prepare(`INSERT INTO finance_journal_events
+      (id,firm_id,matter_id,journal_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`);
+    event.run(randomUUID(), user.firmId, matterId, journalId, 1, 'prepared', 'Prepared from immutable cashroom evidence.', at, preparedBy, at);
+    event.run(randomUUID(), user.firmId, matterId, journalId, 2, 'approved',
+      preparedBy === approvedBy ? 'Cashroom allocation explicitly authorised by the recording user.' : 'Cashroom posting independently authorised.',
+      at, approvedBy, at);
+    event.run(randomUUID(), user.firmId, matterId, journalId, 3, 'posted', 'Balanced cashroom journal posted.', at, user.id, at);
+    return journalId;
+  }
+
+  getReceipt(user: SessionUser, receiptId: string) {
+    this.requireCapability(user, 'finance.read_firm');
+    const row = this.database.prepare(`SELECT id, bank_account_id AS bankAccountId, amount_minor AS amountMinor,
+      received_on AS receivedOn, payer, reference, evidence_document_version_id AS evidenceDocumentVersionId,
+      recorded_by AS recordedBy, recorded_at AS recordedAt FROM finance_receipts WHERE id = ? AND firm_id = ?`)
+      .get(receiptId, user.firmId) as Row | undefined;
+    if (!row) return null;
+    const events = this.database.prepare(`SELECT sequence,event_type AS eventType,note,occurred_at AS occurredAt,
+      recorded_by AS recordedBy FROM finance_receipt_events WHERE receipt_id=? AND firm_id=? ORDER BY sequence`)
+      .all(receiptId, user.firmId) as Row[];
+    const allocations = this.database.prepare(`SELECT id,designation,matter_id AS matterId,client_party_id AS clientPartyId,
+      bill_id AS billId,journal_id AS journalId,amount_minor AS amountMinor,cleared,restricted,
+      reverses_allocation_id AS reversesAllocationId FROM finance_receipt_allocations WHERE receipt_id=? AND firm_id=?`)
+      .all(receiptId, user.firmId) as Row[];
+    const reversed = new Set(allocations.filter((allocation) => allocation.reversesAllocationId).map((allocation) => String(allocation.reversesAllocationId)));
+    const active = allocations.filter((allocation) => !allocation.reversesAllocationId && !reversed.has(String(allocation.id)));
+    return { id: String(row.id), bankAccountId: String(row.bankAccountId), amountMinor: Number(row.amountMinor), currency: 'GBP' as const,
+      receivedOn: String(row.receivedOn), payer: String(row.payer), reference: String(row.reference),
+      evidenceDocumentVersionId: String(row.evidenceDocumentVersionId), recordedBy: String(row.recordedBy),
+      recordedAt: String(row.recordedAt), version: events.length, status: events.at(-1)?.eventType ?? 'recorded',
+      allocatedMinor: active.reduce((total, allocation) => total + Number(allocation.amountMinor), 0),
+      allocations: allocations.map((allocation) => ({ id: String(allocation.id),
+        designation: allocation.designation as 'client' | 'office' | 'suspense',
+        matterId: allocation.matterId ? String(allocation.matterId) : null,
+        clientPartyId: allocation.clientPartyId ? String(allocation.clientPartyId) : null,
+        billId: allocation.billId ? String(allocation.billId) : null,
+        journalId: allocation.journalId ? String(allocation.journalId) : null,
+        amountMinor: Number(allocation.amountMinor), cleared: Boolean(allocation.cleared),
+        restricted: Boolean(allocation.restricted),
+        reversesAllocationId: allocation.reversesAllocationId ? String(allocation.reversesAllocationId) : null })), events };
+  }
+
+  recordReceipt(user: SessionUser, input: RecordFinanceReceiptInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.record_bank_activity');
+    const scope = `record_receipt:${input.bankAccountId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getReceipt>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      if (!this.database.prepare(`SELECT 1 FROM finance_bank_accounts WHERE id=? AND firm_id=? AND active=1`)
+        .get(input.bankAccountId, user.firmId)) throw new BillingCashroomStoreError('NOT_FOUND', 'The bank account was not found.');
+      if (!this.exactEvidence(user.firmId, input.evidenceDocumentVersionId)) throw new BillingCashroomStoreError('INVALID_LINK', 'Exact receipt evidence was not found.');
+      if (input.statementLineId && !this.database.prepare(`SELECT 1 FROM finance_bank_statement_lines WHERE id=? AND firm_id=? AND bank_account_id=?`)
+        .get(input.statementLineId, user.firmId, input.bankAccountId)) throw new BillingCashroomStoreError('INVALID_LINK', 'The statement line was not found.');
+      if (this.database.prepare('SELECT 1 FROM finance_receipts WHERE firm_id=? AND fingerprint=?').get(user.firmId, input.fingerprint)) {
+        throw new BillingCashroomStoreError('CONFLICT', 'A receipt with the same evidence fingerprint already exists.');
+      }
+      const id = randomUUID();
+      const at = this.now().toISOString();
+      this.database.prepare(`INSERT INTO finance_receipts
+        (id,firm_id,bank_account_id,statement_line_id,amount_minor,currency,received_on,payer,reference,
+          evidence_document_version_id,fingerprint,recorded_by,recorded_at)
+        VALUES (?,?,?,?,?,'GBP',?,?,?,?,?,?,?)`).run(id, user.firmId, input.bankAccountId, input.statementLineId,
+        input.amountMinor, input.receivedOn, input.payer, input.reference, input.evidenceDocumentVersionId,
+        input.fingerprint, user.id, at);
+      this.database.prepare(`INSERT INTO finance_receipt_events
+        (id,firm_id,receipt_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,1,'recorded','Receipt evidence recorded without posting.',?,?,?)`)
+        .run(randomUUID(), user.firmId, id, at, user.id, at);
+      const response = this.getReceipt(user, id)!;
+      this.saveFirmReplay(user, scope, id, input.idempotencyKey, input, response, at);
+      this.appendFirmOperational(user, 'finance.receipt_recorded', id, input.idempotencyKey, at,
+        { amountMinor: input.amountMinor, currency: 'GBP', bankAccountId: input.bankAccountId }, audit);
+      return response;
+    });
+  }
+
+  allocateReceipt(user: SessionUser, receiptId: string, input: AllocateFinanceReceiptInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.allocate_money');
+    const scope = `allocate_receipt:${receiptId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getReceipt>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const receipt = this.getReceipt(user, receiptId);
+      if (!receipt) throw new BillingCashroomStoreError('NOT_FOUND', 'The receipt was not found.');
+      if (receipt.version !== input.expectedVersion || receipt.status !== 'recorded') throw new BillingCashroomStoreError('CONFLICT', 'The receipt version or state is stale.');
+      const total = input.allocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0);
+      if (!Number.isSafeInteger(total) || total !== receipt.amountMinor) throw new BillingCashroomStoreError('INVALID_STATE', 'Receipt allocations must equal the exact receipt amount.');
+      const bank = this.database.prepare('SELECT designation FROM finance_bank_accounts WHERE id=? AND firm_id=?')
+        .get(receipt.bankAccountId, user.firmId) as Row;
+      const bankAccount = this.activeAccount(user.firmId, bank.designation === 'client' ? 'CLIENT-BANK' : 'OFFICE-BANK');
+      const at = this.now().toISOString();
+      input.allocations.forEach((allocation, index) => {
+        if (allocation.designation !== 'suspense' && !this.database.prepare(`SELECT 1 FROM parties
+          WHERE id=? AND firm_id=? AND matter_id=? AND kind='client'`).get(allocation.clientPartyId, user.firmId, allocation.matterId)) {
+          throw new BillingCashroomStoreError('INVALID_LINK', 'The exact matter client was not found.');
+        }
+        if (allocation.billId && !this.database.prepare(`SELECT 1 FROM finance_bills WHERE id=? AND firm_id=? AND matter_id=? AND client_party_id=?`)
+          .get(allocation.billId, user.firmId, allocation.matterId, allocation.clientPartyId)) {
+          throw new BillingCashroomStoreError('INVALID_LINK', 'The allocated bill was not found for the exact matter client.');
+        }
+        const id = randomUUID();
+        let journalId: string | null = null;
+        if (allocation.designation !== 'suspense') {
+          const credit = this.activeAccount(user.firmId, allocation.designation === 'client' ? 'CLIENT-LIABILITY' : 'TRADE-DEBTORS');
+          journalId = this.postCashJournal(user, allocation.matterId!, `${receiptId}:${id}`,
+            `${allocation.designation} receipt allocation`, receipt.receivedOn, user.id, user.id,
+            bankAccount, credit, allocation.amountMinor, at);
+        }
+        this.database.prepare(`INSERT INTO finance_receipt_allocations
+          (id,firm_id,receipt_id,designation,matter_id,client_party_id,bill_id,journal_id,amount_minor,currency,
+            cleared,restricted,reverses_allocation_id,allocated_by,allocated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,'GBP',?,?,NULL,?,?)`).run(id, user.firmId, receiptId, allocation.designation,
+          allocation.matterId, allocation.clientPartyId, allocation.billId, journalId, allocation.amountMinor,
+          allocation.cleared ? 1 : 0, allocation.restricted ? 1 : 0, user.id, at);
+      });
+      const event = this.database.prepare(`INSERT INTO finance_receipt_events
+        (id,firm_id,receipt_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,?,?,?,?,?)`);
+      event.run(randomUUID(), user.firmId, receiptId, 2, 'classified', input.note, at, user.id, at);
+      event.run(randomUUID(), user.firmId, receiptId, 3, 'allocated', input.note, at, user.id, at);
+      const response = this.getReceipt(user, receiptId)!;
+      this.saveFirmReplay(user, scope, receiptId, input.idempotencyKey, input, response, at);
+      appendAudit(this.database, { firmId: user.firmId, userId: user.id, action: 'finance.receipt_allocated',
+        entityType: 'finance_receipt', entityId: receiptId, after: { allocatedMinor: total, currency: 'GBP' },
+        requestId: audit.requestId, ipAddress: audit.ipAddress, createdAt: at });
+      return response;
+    });
+  }
+
+  reverseReceiptAllocation(user: SessionUser, receiptId: string, input: ReverseFinanceReceiptAllocationInput, audit: AuditContext) {
+    this.requireCapability(user, 'finance.allocate_money');
+    const scope = `reverse_receipt_allocation:${receiptId}`;
+    const replay = this.replayFirm<NonNullable<ReturnType<typeof this.getReceipt>>>(user, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const receipt = this.getReceipt(user, receiptId);
+      if (!receipt) throw new BillingCashroomStoreError('NOT_FOUND', 'The receipt was not found.');
+      if (receipt.version !== input.expectedVersion) throw new BillingCashroomStoreError('CONFLICT', 'The receipt version is stale.');
+      const original = receipt.allocations.find((allocation) => allocation.id === input.allocationId && !allocation.reversesAllocationId);
+      if (!original || receipt.allocations.some((allocation) => allocation.reversesAllocationId === input.allocationId)) {
+        throw new BillingCashroomStoreError('INVALID_STATE', 'Only an active exact receipt allocation can be reversed.');
+      }
+      const at = this.now().toISOString();
+      const reversalId = randomUUID();
+      let journalId: string | null = null;
+      if (original.designation !== 'suspense') {
+        const lines = this.database.prepare(`SELECT account_id AS accountId,debit_minor AS debitMinor,credit_minor AS creditMinor
+          FROM finance_journal_lines WHERE journal_id=? AND firm_id=? AND matter_id=? ORDER BY line_number`)
+          .all(original.journalId, user.firmId, original.matterId) as Row[];
+        const debitOriginal = lines.find((line) => Number(line.debitMinor) > 0);
+        const creditOriginal = lines.find((line) => Number(line.creditMinor) > 0);
+        if (!debitOriginal || !creditOriginal) throw new BillingCashroomStoreError('INVALID_STATE', 'The original allocation journal is incomplete.');
+        journalId = this.postCashJournal(user, String(original.matterId), `${receiptId}:${reversalId}`,
+          'Reverse exact receipt allocation', at.slice(0, 10), user.id, user.id,
+          String(creditOriginal.accountId), String(debitOriginal.accountId), Number(original.amountMinor), at);
+      }
+      this.database.prepare(`INSERT INTO finance_receipt_allocations
+        (id,firm_id,receipt_id,designation,matter_id,client_party_id,bill_id,journal_id,amount_minor,currency,
+          cleared,restricted,reverses_allocation_id,allocated_by,allocated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,'GBP',?,?,?,?,?)`).run(reversalId, user.firmId, receiptId, original.designation,
+        original.matterId, original.clientPartyId, original.billId, journalId, original.amountMinor,
+        original.cleared ? 1 : 0, original.restricted ? 1 : 0, input.allocationId, user.id, at);
+      this.database.prepare(`INSERT INTO finance_receipt_events
+        (id,firm_id,receipt_id,sequence,event_type,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?, 'reversed',?,?,?,?)`).run(randomUUID(), user.firmId, receiptId, receipt.version + 1,
+        input.note, at, user.id, at);
+      const response = this.getReceipt(user, receiptId)!;
+      this.saveFirmReplay(user, scope, receiptId, input.idempotencyKey, input, response, at);
+      appendAudit(this.database, { firmId: user.firmId, matterId: original.matterId ? String(original.matterId) : null,
+        userId: user.id, action: 'finance.receipt_allocation_reversed', entityType: 'finance_receipt_allocation',
+        entityId: input.allocationId, after: { reversalId, amountMinor: original.amountMinor, currency: 'GBP' },
+        requestId: audit.requestId, ipAddress: audit.ipAddress, createdAt: at });
+      return response;
+    });
+  }
+
+  getMatterMoney(user: SessionUser, matterId: string, clientPartyId: string) {
+    this.requireMatter(user, matterId, 'finance.read_matter');
+    const rows = this.database.prepare(`SELECT a.id,a.designation,a.amount_minor AS amountMinor,a.cleared,a.restricted,
+      EXISTS(SELECT 1 FROM finance_receipt_allocations r WHERE r.reverses_allocation_id=a.id AND r.firm_id=a.firm_id) AS reversed
+      FROM finance_receipt_allocations a WHERE a.firm_id=? AND a.matter_id=? AND a.client_party_id=?
+      AND a.reverses_allocation_id IS NULL`).all(user.firmId, matterId, clientPartyId) as Row[];
+    const base = projectMatterMoney(rows.map((row) => ({ id: String(row.id), designation: row.designation as 'client' | 'office' | 'suspense',
+      amountMinor: Number(row.amountMinor), cleared: Boolean(row.cleared), restricted: Boolean(row.restricted), reversed: Boolean(row.reversed) })));
+    const paymentRow = this.database.prepare(`SELECT COALESCE(SUM(p.amount_minor),0) AS amount FROM finance_payment_requisitions p
+      WHERE p.firm_id=? AND p.matter_id=? AND p.client_party_id=? AND EXISTS (SELECT 1 FROM finance_payment_events e
+      WHERE e.payment_id=p.id AND e.firm_id=p.firm_id AND e.matter_id=p.matter_id AND e.event_type='recorded_external')`)
+      .get(user.firmId, matterId, clientPartyId) as Row;
+    const transferRow = this.database.prepare(`SELECT COALESCE(SUM(t.amount_minor),0) AS amount FROM finance_client_office_transfers t
+      WHERE t.firm_id=? AND t.matter_id=? AND t.client_party_id=? AND EXISTS (SELECT 1 FROM finance_transfer_events e
+      WHERE e.transfer_id=t.id AND e.firm_id=t.firm_id AND e.matter_id=t.matter_id AND e.event_type='posted')`)
+      .get(user.firmId, matterId, clientPartyId) as Row;
+    const pendingPaymentRow = this.database.prepare(`SELECT COALESCE(SUM(p.amount_minor),0) AS amount FROM finance_payment_requisitions p
+      WHERE p.firm_id=? AND p.matter_id=? AND p.client_party_id=? AND EXISTS (SELECT 1 FROM finance_payment_events e
+      WHERE e.payment_id=p.id AND e.firm_id=p.firm_id AND e.matter_id=p.matter_id AND e.event_type='approved')
+      AND NOT EXISTS (SELECT 1 FROM finance_payment_events e WHERE e.payment_id=p.id AND e.firm_id=p.firm_id
+        AND e.matter_id=p.matter_id AND e.event_type IN ('recorded_external','rejected','reversed'))`)
+      .get(user.firmId, matterId, clientPartyId) as Row;
+    const pendingTransferRow = this.database.prepare(`SELECT COALESCE(SUM(t.amount_minor),0) AS amount FROM finance_client_office_transfers t
+      WHERE t.firm_id=? AND t.matter_id=? AND t.client_party_id=? AND EXISTS (SELECT 1 FROM finance_transfer_events e
+      WHERE e.transfer_id=t.id AND e.firm_id=t.firm_id AND e.matter_id=t.matter_id AND e.event_type='approved')
+      AND NOT EXISTS (SELECT 1 FROM finance_transfer_events e WHERE e.transfer_id=t.id AND e.firm_id=t.firm_id
+        AND e.matter_id=t.matter_id AND e.event_type IN ('posted','rejected','reversed'))`)
+      .get(user.firmId, matterId, clientPartyId) as Row;
+    const outgoing = Number(paymentRow.amount) + Number(transferRow.amount);
+    const reserved = Number(pendingPaymentRow.amount) + Number(pendingTransferRow.amount);
+    const available = base.clientAvailableMinor - outgoing - reserved;
+    const held = base.clientHeldMinor - outgoing;
+    const cleared = base.clientClearedMinor - outgoing;
+    if (![available, held, cleared].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+      throw new BillingCashroomStoreError('INVALID_STATE', 'Client-money projection would become negative.');
+    }
+    return { ...base, clientHeldMinor: held, clientClearedMinor: cleared, clientAvailableMinor: available,
+      clientReservedMinor: reserved, officeHeldMinor: base.officeHeldMinor + Number(transferRow.amount) };
+  }
+
+  getClientPayment(user: SessionUser, matterId: string, paymentId: string) {
+    if (!this.canReadMatter(user, matterId)) return null;
+    const row = this.database.prepare(`SELECT id,client_party_id AS clientPartyId,bank_account_id AS bankAccountId,
+      amount_minor AS amountMinor,purpose,beneficiary_name AS beneficiaryName,beneficiary_fingerprint AS beneficiaryFingerprint,
+      prepared_by AS preparedBy,prepared_at AS preparedAt FROM finance_payment_requisitions
+      WHERE id=? AND firm_id=? AND matter_id=?`).get(paymentId, user.firmId, matterId) as Row | undefined;
+    if (!row) return null;
+    const events = this.database.prepare(`SELECT sequence,event_type AS eventType,note,occurred_at AS occurredAt,
+      recorded_by AS recordedBy,evidence_document_version_id AS evidenceDocumentVersionId,journal_id AS journalId
+      FROM finance_payment_events WHERE payment_id=? AND firm_id=? AND matter_id=? ORDER BY sequence`)
+      .all(paymentId, user.firmId, matterId) as Row[];
+    return { id: String(row.id), clientPartyId: String(row.clientPartyId), bankAccountId: String(row.bankAccountId),
+      amountMinor: Number(row.amountMinor), purpose: String(row.purpose), beneficiaryName: String(row.beneficiaryName),
+      beneficiaryFingerprint: String(row.beneficiaryFingerprint), preparedBy: String(row.preparedBy),
+      preparedAt: String(row.preparedAt), currency: 'GBP' as const, version: events.length,
+      status: String(events.at(-1)?.eventType ?? 'prepared'), events };
+  }
+
+  prepareClientPayment(user: SessionUser, matterId: string, input: PrepareFinanceClientPaymentInput, audit: AuditContext) {
+    this.requireMatter(user, matterId, 'finance.prepare_client_payment');
+    const scope = `prepare_client_payment:${user.id}`;
+    const replay = this.replay<NonNullable<ReturnType<typeof this.getClientPayment>>>(user, matterId, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      if (!this.database.prepare(`SELECT 1 FROM parties WHERE id=? AND firm_id=? AND matter_id=? AND kind='client'`)
+        .get(input.clientPartyId, user.firmId, matterId)) throw new BillingCashroomStoreError('INVALID_LINK', 'The exact matter client was not found.');
+      if (!this.database.prepare(`SELECT 1 FROM finance_bank_accounts WHERE id=? AND firm_id=? AND designation='client' AND active=1`)
+        .get(input.bankAccountId, user.firmId)) throw new BillingCashroomStoreError('INVALID_LINK', 'The active client bank account was not found.');
+      if (!this.exactEvidence(user.firmId, input.beneficiaryEvidenceDocumentVersionId, matterId)) throw new BillingCashroomStoreError('INVALID_LINK', 'Exact beneficiary evidence was not found.');
+      const id = randomUUID();
+      const at = this.now().toISOString();
+      this.database.prepare(`INSERT INTO finance_payment_requisitions
+        (id,firm_id,matter_id,client_party_id,bank_account_id,amount_minor,currency,purpose,beneficiary_name,
+          beneficiary_fingerprint,beneficiary_evidence_document_version_id,requested_payment_method,prepared_by,prepared_at)
+        VALUES (?,?,?,?,?,?,'GBP',?,?,?,?,?,?,?)`).run(id, user.firmId, matterId, input.clientPartyId,
+        input.bankAccountId, input.amountMinor, input.purpose, input.beneficiaryName, input.beneficiaryFingerprint,
+        input.beneficiaryEvidenceDocumentVersionId, input.requestedPaymentMethod, user.id, at);
+      this.database.prepare(`INSERT INTO finance_payment_events
+        (id,firm_id,matter_id,payment_id,sequence,event_type,evidence_document_version_id,journal_id,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,1,'prepared',?,NULL,?,?,?,?)`).run(randomUUID(), user.firmId, matterId, id,
+        input.beneficiaryEvidenceDocumentVersionId, input.purpose, at, user.id, at);
+      const prior = this.database.prepare(`SELECT p.beneficiary_fingerprint AS beneficiaryFingerprint
+        FROM finance_payment_requisitions p WHERE p.firm_id=? AND p.matter_id=? AND p.client_party_id=? AND p.id<>?
+        AND EXISTS (SELECT 1 FROM finance_payment_events e WHERE e.payment_id=p.id AND e.firm_id=p.firm_id
+          AND e.matter_id=p.matter_id AND e.event_type='recorded_external') ORDER BY p.prepared_at DESC LIMIT 1`)
+        .get(user.firmId, matterId, input.clientPartyId, id) as Row | undefined;
+      if (prior && prior.beneficiaryFingerprint !== input.beneficiaryFingerprint) {
+        this.database.prepare(`INSERT INTO finance_exceptions
+          (id,firm_id,matter_id,exception_kind,severity,source_kind,source_id,safe_summary,amount_minor,currency,raised_at)
+          VALUES (?,?,?,'changed_beneficiary','blocker','client_payment',?,
+            'Beneficiary details differ from the last externally completed payment and require independent reverification.',?,'GBP',?)`)
+          .run(randomUUID(), user.firmId, matterId, id, input.amountMinor, at);
+      }
+      const response = this.getClientPayment(user, matterId, id)!;
+      this.saveReplay(user, matterId, scope, id, input.idempotencyKey, input, response, at);
+      this.appendOperational(user, matterId, 'finance.client_payment_prepared', id, 'Client payment prepared',
+        input.idempotencyKey, at, { amountMinor: input.amountMinor, currency: 'GBP' }, audit, 'finance_payment');
+      return response;
+    });
+  }
+
+  approveClientPayment(user: SessionUser, matterId: string, paymentId: string, input: ApproveFinanceClientPaymentInput, audit: AuditContext) {
+    this.requireMatter(user, matterId, 'finance.approve_client_payment');
+    const scope = `approve_client_payment:${paymentId}`;
+    const replay = this.replay<NonNullable<ReturnType<typeof this.getClientPayment>>>(user, matterId, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const payment = this.getClientPayment(user, matterId, paymentId);
+      if (!payment) throw new BillingCashroomStoreError('NOT_FOUND', 'The client payment was not found.');
+      if (payment.preparedBy === user.id) throw new BillingCashroomStoreError('INDEPENDENCE_REQUIRED', 'Client-payment approval requires another person.');
+      if (payment.version !== input.expectedVersion || payment.status !== 'prepared') throw new BillingCashroomStoreError('CONFLICT', 'The client-payment version or state is stale.');
+      if (!this.exactEvidence(user.firmId, input.beneficiaryEvidenceDocumentVersionId, matterId)) throw new BillingCashroomStoreError('INVALID_LINK', 'Exact beneficiary verification evidence was not found.');
+      const balance = this.getMatterMoney(user, matterId, String(payment.clientPartyId));
+      if (Number(payment.amountMinor) > balance.clientAvailableMinor) throw new BillingCashroomStoreError('INVALID_STATE', 'The payment exceeds cleared unrestricted funds for this exact matter client.');
+      const approvedAt = isoTimestamp(input.approvedAt, 'Payment approval timestamp');
+      if (Date.parse(approvedAt) <= Date.parse(String(payment.preparedAt))) throw new BillingCashroomStoreError('INVALID_STATE', 'Payment approval must occur after preparation.');
+      const event = this.database.prepare(`INSERT INTO finance_payment_events
+        (id,firm_id,matter_id,payment_id,sequence,event_type,evidence_document_version_id,journal_id,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,?,?,?,NULL,?,?,?,?)`);
+      event.run(randomUUID(), user.firmId, matterId, paymentId, 2, 'beneficiary_verified', input.beneficiaryEvidenceDocumentVersionId,
+        input.note, approvedAt, user.id, this.now().toISOString());
+      event.run(randomUUID(), user.firmId, matterId, paymentId, 3, 'approved', input.beneficiaryEvidenceDocumentVersionId,
+        input.note, approvedAt, user.id, this.now().toISOString());
+      const response = this.getClientPayment(user, matterId, paymentId)!;
+      this.saveReplay(user, matterId, scope, paymentId, input.idempotencyKey, input, response, this.now().toISOString());
+      this.appendOperational(user, matterId, 'finance.client_payment_approved', paymentId, 'Client payment approved',
+        input.idempotencyKey, approvedAt, { amountMinor: payment.amountMinor, currency: 'GBP' }, audit, 'finance_payment');
+      return response;
+    });
+  }
+
+  recordClientPayment(user: SessionUser, matterId: string, paymentId: string, input: RecordFinanceClientPaymentInput, audit: AuditContext) {
+    this.requireMatter(user, matterId, 'finance.post_cashroom');
+    const scope = `record_client_payment:${paymentId}`;
+    const replay = this.replay<NonNullable<ReturnType<typeof this.getClientPayment>>>(user, matterId, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const payment = this.getClientPayment(user, matterId, paymentId);
+      if (!payment) throw new BillingCashroomStoreError('NOT_FOUND', 'The client payment was not found.');
+      const approver = payment.events.find((event) => event.eventType === 'approved');
+      if (!approver || approver.recordedBy === user.id) throw new BillingCashroomStoreError('INDEPENDENCE_REQUIRED', 'Payment recording requires a person other than the approver.');
+      if (payment.version !== input.expectedVersion || payment.status !== 'approved') throw new BillingCashroomStoreError('CONFLICT', 'The client-payment version or state is stale.');
+      if (!this.exactEvidence(user.firmId, input.evidenceDocumentVersionId, matterId)) throw new BillingCashroomStoreError('INVALID_LINK', 'Exact external payment evidence was not found.');
+      const balance = this.getMatterMoney(user, matterId, String(payment.clientPartyId));
+      if (Number(payment.amountMinor) > balance.clientAvailableMinor + Number(payment.amountMinor)) throw new BillingCashroomStoreError('INVALID_STATE', 'The payment exceeds current cleared unrestricted funds.');
+      const at = isoTimestamp(input.completedAt, 'External payment timestamp');
+      if (Date.parse(at) <= Date.parse(String(approver.occurredAt))) throw new BillingCashroomStoreError('INVALID_STATE', 'External payment completion must occur after approval.');
+      const journalId = this.postCashJournal(user, matterId, paymentId, 'Externally completed client payment', at.slice(0, 10),
+        String(payment.preparedBy), String(approver.recordedBy), this.activeAccount(user.firmId, 'CLIENT-LIABILITY'),
+        this.activeAccount(user.firmId, 'CLIENT-BANK'), Number(payment.amountMinor), at);
+      this.database.prepare(`INSERT INTO finance_payment_events
+        (id,firm_id,matter_id,payment_id,sequence,event_type,evidence_document_version_id,journal_id,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,?,'recorded_external',?,?,?,?,?,?)`).run(randomUUID(), user.firmId, matterId, paymentId,
+        payment.version + 1, input.evidenceDocumentVersionId, journalId, input.note, at, user.id, this.now().toISOString());
+      const response = this.getClientPayment(user, matterId, paymentId)!;
+      this.saveReplay(user, matterId, scope, paymentId, input.idempotencyKey, input, response, this.now().toISOString());
+      this.appendOperational(user, matterId, 'finance.client_payment_recorded_external', paymentId, 'External client payment recorded',
+        input.idempotencyKey, at, { amountMinor: payment.amountMinor, currency: 'GBP', evidenceDocumentVersionId: input.evidenceDocumentVersionId }, audit, 'finance_payment');
+      return response;
+    });
+  }
+
+  getClientOfficeTransfer(user: SessionUser, matterId: string, transferId: string) {
+    if (!this.canReadMatter(user, matterId)) return null;
+    const row = this.database.prepare(`SELECT id,client_party_id AS clientPartyId,bill_id AS billId,amount_minor AS amountMinor,
+      prepared_by AS preparedBy,prepared_at AS preparedAt FROM finance_client_office_transfers
+      WHERE id=? AND firm_id=? AND matter_id=?`).get(transferId, user.firmId, matterId) as Row | undefined;
+    if (!row) return null;
+    const events = this.database.prepare(`SELECT sequence,event_type AS eventType,note,occurred_at AS occurredAt,
+      recorded_by AS recordedBy,client_journal_id AS clientJournalId,office_journal_id AS officeJournalId
+      FROM finance_transfer_events WHERE transfer_id=? AND firm_id=? AND matter_id=? ORDER BY sequence`)
+      .all(transferId, user.firmId, matterId) as Row[];
+    return { id: String(row.id), clientPartyId: String(row.clientPartyId), billId: String(row.billId),
+      amountMinor: Number(row.amountMinor), preparedBy: String(row.preparedBy), preparedAt: String(row.preparedAt),
+      currency: 'GBP' as const, version: events.length, status: String(events.at(-1)?.eventType ?? 'prepared'), events };
+  }
+
+  prepareClientOfficeTransfer(user: SessionUser, matterId: string, input: PrepareFinanceClientOfficeTransferInput, audit: AuditContext) {
+    this.requireMatter(user, matterId, 'finance.prepare_client_payment');
+    const scope = `prepare_client_office_transfer:${user.id}`;
+    const replay = this.replay<NonNullable<ReturnType<typeof this.getClientOfficeTransfer>>>(user, matterId, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const bill = this.getBill(user, matterId, input.billId);
+      if (!bill || !['delivered', 'part_paid'].includes(bill.status) || bill.clientPartyId !== input.clientPartyId) {
+        throw new BillingCashroomStoreError('INVALID_LINK', 'A delivered bill for the exact matter client was not found.');
+      }
+      const balance = this.getMatterMoney(user, matterId, input.clientPartyId);
+      if (input.amountMinor > Math.min(balance.clientAvailableMinor, bill.outstandingMinor)) {
+        throw new BillingCashroomStoreError('INVALID_STATE', 'The transfer exceeds the delivered bill balance or exact available client funds.');
+      }
+      const id = randomUUID();
+      const at = this.now().toISOString();
+      this.database.prepare(`INSERT INTO finance_client_office_transfers
+        (id,firm_id,matter_id,client_party_id,bill_id,amount_minor,currency,prepared_by,prepared_at)
+        VALUES (?,?,?,?,?,?,'GBP',?,?)`).run(id, user.firmId, matterId, input.clientPartyId, input.billId, input.amountMinor, user.id, at);
+      this.database.prepare(`INSERT INTO finance_transfer_events
+        (id,firm_id,matter_id,transfer_id,sequence,event_type,client_journal_id,office_journal_id,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,1,'prepared',NULL,NULL,?,?,?,?)`).run(randomUUID(), user.firmId, matterId, id, input.note, at, user.id, at);
+      const response = this.getClientOfficeTransfer(user, matterId, id)!;
+      this.saveReplay(user, matterId, scope, id, input.idempotencyKey, input, response, at);
+      this.appendOperational(user, matterId, 'finance.client_office_transfer_prepared', id, 'Client-to-office transfer prepared',
+        input.idempotencyKey, at, { billId: input.billId, amountMinor: input.amountMinor, currency: 'GBP' }, audit, 'finance_transfer');
+      return response;
+    });
+  }
+
+  approveClientOfficeTransfer(user: SessionUser, matterId: string, transferId: string, input: ApproveFinanceClientOfficeTransferInput, audit: AuditContext) {
+    this.requireMatter(user, matterId, 'finance.approve_client_payment');
+    const scope = `approve_client_office_transfer:${transferId}`;
+    const replay = this.replay<NonNullable<ReturnType<typeof this.getClientOfficeTransfer>>>(user, matterId, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const transfer = this.getClientOfficeTransfer(user, matterId, transferId);
+      if (!transfer) throw new BillingCashroomStoreError('NOT_FOUND', 'The transfer was not found.');
+      if (transfer.preparedBy === user.id) throw new BillingCashroomStoreError('INDEPENDENCE_REQUIRED', 'Transfer approval requires another person.');
+      if (transfer.version !== input.expectedVersion || transfer.status !== 'prepared') throw new BillingCashroomStoreError('CONFLICT', 'The transfer version or state is stale.');
+      const bill = this.getBill(user, matterId, String(transfer.billId));
+      const balance = this.getMatterMoney(user, matterId, String(transfer.clientPartyId));
+      if (!bill || !['delivered', 'part_paid'].includes(bill.status) || Number(transfer.amountMinor) > Math.min(balance.clientAvailableMinor, bill.outstandingMinor)) {
+        throw new BillingCashroomStoreError('INVALID_STATE', 'The transfer no longer fits the delivered bill or exact available client funds.');
+      }
+      const at = isoTimestamp(input.approvedAt, 'Transfer approval timestamp');
+      if (Date.parse(at) <= Date.parse(String(transfer.preparedAt))) throw new BillingCashroomStoreError('INVALID_STATE', 'Transfer approval must occur after preparation.');
+      this.database.prepare(`INSERT INTO finance_transfer_events
+        (id,firm_id,matter_id,transfer_id,sequence,event_type,client_journal_id,office_journal_id,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,2,'approved',NULL,NULL,?,?,?,?)`).run(randomUUID(), user.firmId, matterId, transferId, input.note, at, user.id, this.now().toISOString());
+      const response = this.getClientOfficeTransfer(user, matterId, transferId)!;
+      this.saveReplay(user, matterId, scope, transferId, input.idempotencyKey, input, response, this.now().toISOString());
+      this.appendOperational(user, matterId, 'finance.client_office_transfer_approved', transferId, 'Client-to-office transfer approved',
+        input.idempotencyKey, at, { billId: transfer.billId, amountMinor: transfer.amountMinor, currency: 'GBP' }, audit, 'finance_transfer');
+      return response;
+    });
+  }
+
+  postClientOfficeTransfer(user: SessionUser, matterId: string, transferId: string, input: PostFinanceClientOfficeTransferInput, audit: AuditContext) {
+    this.requireMatter(user, matterId, 'finance.post_cashroom');
+    const scope = `post_client_office_transfer:${transferId}`;
+    const replay = this.replay<NonNullable<ReturnType<typeof this.getClientOfficeTransfer>>>(user, matterId, scope, input.idempotencyKey, input);
+    if (replay) return replay;
+    return transaction(this.database, () => {
+      const transfer = this.getClientOfficeTransfer(user, matterId, transferId);
+      if (!transfer) throw new BillingCashroomStoreError('NOT_FOUND', 'The transfer was not found.');
+      const approval = transfer.events.find((event) => event.eventType === 'approved');
+      if (!approval || approval.recordedBy === user.id) throw new BillingCashroomStoreError('INDEPENDENCE_REQUIRED', 'Transfer posting requires a person other than the approver.');
+      if (transfer.version !== input.expectedVersion || transfer.status !== 'approved') throw new BillingCashroomStoreError('CONFLICT', 'The transfer version or state is stale.');
+      const bill = this.getBill(user, matterId, String(transfer.billId));
+      const balance = this.getMatterMoney(user, matterId, String(transfer.clientPartyId));
+      if (!bill || Number(transfer.amountMinor) > Math.min(balance.clientAvailableMinor + Number(transfer.amountMinor), bill.outstandingMinor)) {
+        throw new BillingCashroomStoreError('INVALID_STATE', 'The transfer no longer fits the bill or exact available client funds.');
+      }
+      const at = isoTimestamp(input.postedAt, 'Transfer posting timestamp');
+      if (Date.parse(at) <= Date.parse(String(approval.occurredAt))) throw new BillingCashroomStoreError('INVALID_STATE', 'Transfer posting must occur after approval.');
+      const clientJournalId = this.postCashJournal(user, matterId, `${transferId}:client`, 'Client side of bill transfer',
+        at.slice(0, 10), String(transfer.preparedBy), String(approval.recordedBy), this.activeAccount(user.firmId, 'CLIENT-LIABILITY'),
+        this.activeAccount(user.firmId, 'CLIENT-BANK'), Number(transfer.amountMinor), at);
+      const officeJournalId = this.postCashJournal(user, matterId, `${transferId}:office`, 'Office side of bill transfer',
+        at.slice(0, 10), String(transfer.preparedBy), String(approval.recordedBy), this.activeAccount(user.firmId, 'OFFICE-BANK'),
+        this.activeAccount(user.firmId, 'TRADE-DEBTORS'), Number(transfer.amountMinor), at);
+      this.database.prepare(`INSERT INTO finance_transfer_events
+        (id,firm_id,matter_id,transfer_id,sequence,event_type,client_journal_id,office_journal_id,note,occurred_at,recorded_by,recorded_at)
+        VALUES (?,?,?,?,3,'posted',?,?,?,?,?,?)`).run(randomUUID(), user.firmId, matterId, transferId,
+        clientJournalId, officeJournalId, 'Linked client and office journals posted after final sufficiency recheck.', at, user.id, this.now().toISOString());
+      const response = this.getClientOfficeTransfer(user, matterId, transferId)!;
+      this.saveReplay(user, matterId, scope, transferId, input.idempotencyKey, input, response, this.now().toISOString());
+      this.appendOperational(user, matterId, 'finance.client_office_transfer_posted', transferId, 'Client-to-office transfer posted',
+        input.idempotencyKey, at, { billId: transfer.billId, amountMinor: transfer.amountMinor, currency: 'GBP' }, audit, 'finance_transfer');
       return response;
     });
   }

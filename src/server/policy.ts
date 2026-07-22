@@ -223,6 +223,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'finance.approve_time', 'finance.manage_rates', 'finance.manage_estimates',
     'finance.manage_disbursements', 'finance.prepare_journal', 'finance.approve_journal',
     'finance.prepare_bill', 'finance.approve_bill',
+    'finance.approve_client_payment',
     'finance.signoff_reconciliation', 'finance.export_accounts',
     'administration.view',
   ],

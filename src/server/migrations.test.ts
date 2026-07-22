@@ -68,6 +68,8 @@ describe('runMigrations', () => {
     expect(billSql).toMatch(/FOREIGN KEY \(client_party_id,firm_id,matter_id\)/);
     const statementBatchSql = String((database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='finance_bank_statement_batches'").get() as { sql: string }).sql);
     expect(statementBatchSql).toMatch(/UNIQUE\(firm_id,bank_account_id,raw_checksum\)/);
+    const allocationColumns = (database.prepare('PRAGMA table_info(finance_receipt_allocations)').all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(allocationColumns).toEqual(expect.arrayContaining(['cleared', 'restricted']));
 
     for (const eventTable of [
       'finance_bill_events', 'finance_credit_note_events', 'finance_receipt_events',

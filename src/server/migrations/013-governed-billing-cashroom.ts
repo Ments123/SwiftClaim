@@ -183,6 +183,7 @@ const sql = String.raw`
     designation TEXT NOT NULL CHECK(designation IN ('client','office','suspense')),
     matter_id TEXT, client_party_id TEXT, bill_id TEXT, journal_id TEXT,
     amount_minor INTEGER NOT NULL CHECK(amount_minor > 0 AND amount_minor <= 9007199254740991), currency TEXT NOT NULL CHECK(currency='GBP'),
+    cleared INTEGER NOT NULL CHECK(cleared IN (0,1)), restricted INTEGER NOT NULL CHECK(restricted IN (0,1)),
     reverses_allocation_id TEXT, allocated_by TEXT NOT NULL, allocated_at TEXT NOT NULL,
     FOREIGN KEY (receipt_id,firm_id) REFERENCES finance_receipts(id,firm_id),
     FOREIGN KEY (matter_id,firm_id) REFERENCES matters(id,firm_id),
@@ -193,6 +194,7 @@ const sql = String.raw`
     FOREIGN KEY (allocated_by,firm_id) REFERENCES users(id,firm_id),
     CHECK((designation='suspense' AND matter_id IS NULL AND client_party_id IS NULL AND bill_id IS NULL AND journal_id IS NULL)
       OR (designation IN ('client','office') AND matter_id IS NOT NULL AND client_party_id IS NOT NULL AND journal_id IS NOT NULL)),
+    CHECK(restricted=0 OR designation='client'),
     UNIQUE(id,firm_id)
   ) STRICT;
   CREATE TABLE finance_payment_requisitions (
