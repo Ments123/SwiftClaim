@@ -31,3 +31,27 @@ export interface ClosureReadinessResult {
   unresolved: ClosureBlocker[];
   invalidTransfers: string[];
 }
+
+export interface PrepareClosureInput {
+  outcome: string;
+  closureReason: string;
+  lessons: string;
+  finalClientReportStatus: 'sent';
+  finalClientReportDocumentVersionId: string;
+  documentsPosition: 'returned' | 'retained' | 'mixed';
+  documentsNote: string;
+  retentionBasis: string;
+  retentionUntil: string;
+  undertakingsConfirmedClear: true;
+  complaintsConfirmedClear: true;
+  attestationNote: string;
+  transfers: ClosureTransfer[];
+  explicitHumanAuthority: true;
+  idempotencyKey: string;
+}
+
+export interface ClosureDecisionInput {
+  note: string;
+  explicitHumanAuthority: true;
+  idempotencyKey: string;
+}
