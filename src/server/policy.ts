@@ -91,6 +91,11 @@ export type Capability =
   | 'finance.prepare_reconciliation'
   | 'finance.signoff_reconciliation'
   | 'finance.export_accounts'
+  | 'closure.read'
+  | 'closure.prepare'
+  | 'closure.approve'
+  | 'closure.reopen'
+  | 'closure.manage_hold'
   | 'administration.view';
 
 const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
@@ -160,6 +165,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'finance.prepare_client_payment', 'finance.approve_client_payment',
     'finance.post_cashroom', 'finance.prepare_reconciliation',
     'finance.signoff_reconciliation', 'finance.export_accounts',
+    'closure.read', 'closure.prepare', 'closure.approve', 'closure.reopen', 'closure.manage_hold',
     'administration.view',
   ],
   partner: [
@@ -225,6 +231,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'finance.prepare_bill', 'finance.approve_bill',
     'finance.approve_client_payment',
     'finance.signoff_reconciliation', 'finance.export_accounts',
+    'closure.read', 'closure.prepare', 'closure.approve', 'closure.reopen', 'closure.manage_hold',
     'administration.view',
   ],
   solicitor: [
@@ -276,6 +283,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'finance.read_matter', 'finance.record_time', 'finance.approve_time',
     'finance.manage_estimates',
     'finance.prepare_bill',
+    'closure.read', 'closure.prepare',
   ],
   paralegal: [
     'matter.read',
@@ -302,6 +310,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'pleadings.record_external',
     'disclosure.read', 'disclosure.prepare', 'disclosure.record_external',
     'finance.read_matter', 'finance.record_time',
+    'closure.read',
   ],
   finance: [
     'matter.read', 'finance.read_matter', 'finance.read_firm',
@@ -311,7 +320,7 @@ const ROLE_CAPABILITIES: Record<FirmRole, readonly Capability[]> = {
     'finance.prepare_client_payment', 'finance.approve_client_payment',
     'finance.post_cashroom', 'finance.prepare_reconciliation', 'finance.export_accounts',
   ],
-  readonly: ['matter.read', 'communications.read'],
+  readonly: ['matter.read', 'communications.read', 'closure.read'],
 };
 
 export function hasCapability(

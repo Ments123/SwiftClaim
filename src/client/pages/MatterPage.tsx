@@ -54,6 +54,7 @@ import { RepairsQuantumPanel } from '../components/matter/RepairsQuantumPanel.js
 const DisclosurePanel = lazy(() => import('../components/matter/DisclosurePanel.js').then((module) => ({ default: module.DisclosurePanel })));
 const FinancePanel = lazy(() => import('../components/matter/FinancePanel.js').then((module) => ({ default: module.FinancePanel })));
 const BillingPanel = lazy(() => import('../components/matter/BillingPanel.js').then((module) => ({ default: module.BillingPanel })));
+const ClosurePanel = lazy(() => import('../components/matter/ClosurePanel.js').then((module) => ({ default: module.ClosurePanel })));
 
 interface MatterPageProps {
   matterId: string;
@@ -442,11 +443,13 @@ export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPage
       version: document.latestVersion.version,
       originalName: document.latestVersion.originalName,
     }] : []);
+  const matterReadOnly = ['closed', 'archived'].includes(aggregate?.matter.status ?? summary.matter.status);
 
   return (
-    <main className="page page--matter">
+    <main className={`page page--matter${matterReadOnly ? ' is-read-only' : ''}`}>
       <button className="back-link" type="button" onClick={onBack}><ArrowLeft size={16} /> Back to matters</button>
       <MatterHeader data={summary} />
+      {matterReadOnly ? <div className="closure-readonly matter-readonly-banner" role="status"><ShieldCheck size={18} /><div><strong>Closed matter · read-only</strong><span>Records remain available. Ordinary changes are blocked until an authorised reopening is recorded.</span></div></div> : null}
 
       <div className="matter-workspace">
         <MatterSectionRail
@@ -488,7 +491,7 @@ export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPage
           loading={profileLoading}
           error={profileError}
           parties={aggregate?.parties ?? []}
-          canWrite={aggregate?.permissions.canWrite ?? false}
+          canWrite={(aggregate?.permissions.canWrite ?? false) && !matterReadOnly}
           onAddParty={() => setPartyOpen(true)}
           onRetry={retryProfile}
         />
@@ -620,9 +623,15 @@ export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPage
         </div>
       ) : null}
 
+      {section === 'closure_retention' ? (
+        <Suspense fallback={<section className="surface tab-surface page-state">Loading closure controls…</section>}>
+          <ClosurePanel matterId={matterId} team={aggregate?.team ?? []} documents={financeDocumentSources} />
+        </Suspense>
+      ) : null}
+
       {aggregate && section === 'documents' ? (
         <section className="surface tab-surface">
-          <header className="section-header section-header--page"><div><span className="eyebrow">Evidence register</span><h2>Documents</h2></div>{aggregate.permissions.canWrite ? <button className="button button--primary button--small" type="button" onClick={() => setDocumentOpen(true)}><Upload size={16} /> Upload document</button> : null}</header>
+          <header className="section-header section-header--page"><div><span className="eyebrow">Evidence register</span><h2>Documents</h2></div>{aggregate.permissions.canWrite && !matterReadOnly ? <button className="button button--primary button--small" type="button" onClick={() => setDocumentOpen(true)}><Upload size={16} /> Upload document</button> : null}</header>
           <div className="document-security"><ShieldCheck size={17} /><span>Every stored version is immutable and SHA-256 verified.</span></div>
           {aggregate.documents.length ? <div className="document-list">{aggregate.documents.map((document) => (
             <article className="document-row" key={document.id}>
@@ -637,13 +646,13 @@ export function MatterPage({ matterId, onBack, financeOnly = false }: MatterPage
 
       {aggregate && section === 'tasks_calendar' ? (
         <section className="surface tab-surface">
-          <header className="section-header section-header--page"><div><span className="eyebrow">Controlled work</span><h2>Tasks & deadlines</h2></div>{aggregate.permissions.canWrite ? <button className="button button--primary button--small" type="button" onClick={() => setTaskOpen(true)}><Plus size={16} /> Add deadline</button> : null}</header>
+          <header className="section-header section-header--page"><div><span className="eyebrow">Controlled work</span><h2>Tasks & deadlines</h2></div>{aggregate.permissions.canWrite && !matterReadOnly ? <button className="button button--primary button--small" type="button" onClick={() => setTaskOpen(true)}><Plus size={16} /> Add deadline</button> : null}</header>
           {aggregate.tasks.length ? <div className="task-list">{aggregate.tasks.map((task) => (
             <article className={`task-row ${task.status === 'completed' ? 'task-row--complete' : ''}`} key={task.id}>
               <span className={`task-check ${task.status === 'completed' ? 'is-complete' : ''}`}>{task.status === 'completed' ? <Check size={15} /> : null}</span>
               <div className="task-row__main"><strong>{task.title}</strong><p>{task.notes || 'No notes'}</p><small><UserRound size={13} /> {task.assignee.name}</small></div>
               <div className="task-row__due"><span className={`priority-pill priority-pill--${task.priority}`}>{task.priority}</span><strong>{formatDate(task.dueAt)}</strong><small>{task.status.replace('_', ' ')}</small></div>
-              {aggregate.permissions.canWrite && !['completed', 'cancelled'].includes(task.status) ? <button className="button button--ghost button--small" type="button" disabled={updatingTask === task.id} onClick={() => void completeTask(task.id)}><Check size={15} /> {updatingTask === task.id ? 'Saving…' : 'Complete'}</button> : null}
+              {aggregate.permissions.canWrite && !matterReadOnly && !['completed', 'cancelled'].includes(task.status) ? <button className="button button--ghost button--small" type="button" disabled={updatingTask === task.id} onClick={() => void completeTask(task.id)}><Check size={15} /> {updatingTask === task.id ? 'Saving…' : 'Complete'}</button> : null}
             </article>
           ))}</div> : <Empty icon={<ClipboardCheck />} title="No tasks or deadlines" text="Create a controlled action and assign it to a member of the firm." />}
         </section>

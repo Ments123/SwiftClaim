@@ -1,4 +1,5 @@
 import {
+  ArchiveRestore,
   Banknote,
   Building2,
   CalendarCheck2,
@@ -95,6 +96,12 @@ const SECTION_ITEMS: ReadonlyArray<{
     id: 'chronology',
     label: 'Chronology',
     icon: MessageSquareText,
+    available: true,
+  },
+  {
+    id: 'closure_retention',
+    label: 'Closure & retention',
+    icon: ArchiveRestore,
     available: true,
   },
   { id: 'audit', label: 'Audit', icon: FileClock, available: true },

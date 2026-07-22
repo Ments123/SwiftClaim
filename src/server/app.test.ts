@@ -333,6 +333,20 @@ describe('SwiftClaim API', () => {
     ).toBe(true);
   });
 
+  it('keeps closed matters readable but blocks existing mutation routes', async () => {
+    const cookie = await login(app);
+    database.prepare("UPDATE matters SET status='closed',stage='Closed' WHERE id=? AND firm_id=?")
+      .run(SEED_IDS.northstarMatter, SEED_IDS.northstarFirm);
+    const readable = await app.inject({ method: 'GET', url: `/api/matters/${SEED_IDS.northstarMatter}`, headers: { cookie } });
+    expect(readable.statusCode).toBe(200);
+    const mutation = await app.inject({
+      method: 'POST', url: `/api/matters/${SEED_IDS.northstarMatter}/tasks`, headers: { cookie },
+      payload: { title: 'Work after closure', notes: '', dueAt: '2026-08-01T12:00:00.000Z', priority: 'normal', assigneeUserId: SEED_IDS.ava },
+    });
+    expect(mutation.statusCode).toBe(409);
+    expect(mutation.json().error.code).toBe('MATTER_CLOSED');
+  });
+
   it('creates and completes a deadline with an evidential history', async () => {
     const cookie = await login(app);
     const created = await app.inject({

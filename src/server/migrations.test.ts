@@ -26,10 +26,28 @@ describe('runMigrations', () => {
       { version: 11, name: 'governed disclosure and evidence' },
       { version: 12, name: 'governed finance foundation' },
       { version: 13, name: 'governed billing and cashroom' },
+      { version: 14, name: 'matter closure and reopening' },
     ]);
     expect(migrations.every(({ checksum }) => checksum.length === 64)).toBe(
       true,
     );
+  });
+
+  it('creates immutable tenant-safe closure and retention records', () => {
+    const database = memoryDatabase();
+    runMigrations(database, migrations, '2026-07-22T09:00:00.000Z');
+    const tableNames = (database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(tableNames).toEqual(expect.arrayContaining([
+      'matter_closure_reviews', 'matter_closure_blockers', 'matter_closure_events',
+      'matter_active_periods', 'post_closure_obligations', 'retention_schedules',
+      'legal_holds', 'legal_hold_events', 'closure_command_receipts',
+    ]));
+    const triggerNames = (database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'matter_closure_%' OR name LIKE 'post_closure_%' OR name LIKE 'legal_hold_%' OR name LIKE 'retention_%')").all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual(expect.arrayContaining([
+      'matter_closure_reviews_no_update', 'matter_closure_blockers_no_delete',
+      'matter_closure_events_no_update', 'post_closure_obligations_no_delete',
+      'retention_schedules_no_update', 'legal_hold_events_no_delete',
+    ]));
   });
 
   it('creates tenant-safe immutable billing and cashroom infrastructure', () => {
